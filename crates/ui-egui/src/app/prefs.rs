@@ -180,6 +180,8 @@ impl PdfCraftApp {
         // The Print dialog's own paper sizes (print.page-setup).
         v["print_custom_papers"] = serde_json::json!(self.print_draft.custom_papers);
         v["show_page_edge_shadows"] = self.show_page_edge_shadows.into();
+        // Read by the desktop app before the next window opens (egui's dithering).
+        v[effects::KEY] = self.effects.saved_value().into();
         v["hotbar"] = serde_json::to_value(&self.hotbar).unwrap_or_default();
         v["comment_tool_pinned"] = serde_json::Value::Bool(self.comment_prefs.pinned);
         v["show_secured_notice"] = serde_json::Value::Bool(self.show_secured_notice);
@@ -423,6 +425,7 @@ impl PdfCraftApp {
         if let Some(show) = v["show_page_edge_shadows"].as_bool() {
             self.show_page_edge_shadows = show;
         }
+        self.effects.restore(v);
         if let Some(width) = v["fill_text_border"].as_f64().and_then(fill_sign::valid_text_border) {
             self.fill_text_default.width = width;
         }
