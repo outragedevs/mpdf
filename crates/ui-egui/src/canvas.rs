@@ -886,6 +886,10 @@ pub(crate) enum PageMenuAction {
     EditPdf,
     AddText,
     AddImage,
+    /// Add an image under the page's text and pictures.
+    AddImageBehind,
+    /// Open Add background.
+    AddBackground,
     DeletePage(usize),
     ExportPdf,
     Find,
@@ -962,6 +966,8 @@ pub(crate) fn default_page_context_menu(ui: &mut egui::Ui, page: usize, at: [f64
     pick(ui.add_enabled(perms.can_modify, egui::Button::new(egui::RichText::new(tl!("Edit this PDF")).strong())), ui, A::EditPdf);
     pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add text"))), ui, A::AddText);
     pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add image"))), ui, A::AddImage);
+    pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add image behind the text"))), ui, A::AddImageBehind);
+    pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add background…"))), ui, A::AddBackground);
     pick(ui.add_enabled(perms.can_assemble, egui::Button::new(tl!("Delete page"))), ui, A::DeletePage(page));
     pick(ui.add_enabled(perms.can_copy, egui::Button::new(tl!("Export this PDF"))), ui, A::ExportPdf);
 
@@ -3787,6 +3793,12 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
         }
         Some(PageMenuAction::AddImage) => {
             app.add_image_dialog();
+        }
+        Some(PageMenuAction::AddImageBehind) => {
+            app.add_image_behind_dialog();
+        }
+        Some(PageMenuAction::AddBackground) => {
+            app.execute("edit.background");
         }
         Some(PageMenuAction::DeletePage(page)) => {
             app.views[index].pending_edit = Some(pdfcraft_engine::Edit::DeletePages { pages: vec![page] });

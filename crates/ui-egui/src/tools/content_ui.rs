@@ -975,6 +975,15 @@ impl crate::PdfCraftApp {
         self.notify_tr("Adding images arrives on the web with file pickers for images");
     }
 
+    /// The page menu's Add image behind the text: pick a file and place it in the middle of the
+    /// current page, under the page's own text and pictures.
+    pub fn add_image_behind_dialog(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.pick_image(tl!("Choose an image"), |app, name, bytes| app.add_image_on_layer(name, bytes, true));
+        #[cfg(target_arch = "wasm32")]
+        self.notify_tr("Adding images arrives on the web with file pickers for images");
+    }
+
     /// Edit text & images ▸ Replace Image: pick a file to draw in a page image's place.
     pub(crate) fn replace_page_image_dialog(&mut self, page: usize, index: usize) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1152,14 +1161,30 @@ impl crate::PdfCraftApp {
 
     /// Place image `bytes` in the middle of the current page and select it.
     pub fn add_image(&mut self, name: String, bytes: Vec<u8>) {
+        self.add_image_on_layer(name, bytes, false);
+    }
+
+    /// [`Self::add_image`], over the page (`behind` false) or under its own text and pictures.
+    pub fn add_image_on_layer(&mut self, name: String, bytes: Vec<u8>, behind: bool) {
         let Some((i, id)) = self.active_ids() else { return };
         let page = self.views[i].current;
         let before_img = self.session.get(id).map_or(0, |d| d.page_images(page).len());
-        let before_added = self.session.get(id).map_or(0, |d| d.added().iter().filter(|a| a.page == page).count());
-        if self.apply_edit(Edit::AddImage { page, rect: None, name, bytes: std::sync::Arc::new(bytes), behind: false }) {
+        // An image behind the content is listed after the ones already there and before every
+        // item on top; one on top is the page's last item.
+        let before_added = self.session.get(id).map_or(0, |d| {
+            let on_page = d.added().iter().filter(|a| a.page == page);
+            if behind { on_page.filter(|a| matches!(&a.content, AddedContent::Image(img) if img.behind)).count() } else { on_page.count() }
+        });
+        if self.apply_edit(Edit::AddImage { page, rect: None, name, bytes: std::sync::Arc::new(bytes), behind }) {
             self.views[i].content.selected = Some((page, before_added));
             self.views[i].content.select_added = Some((page, before_added));
-            self.views[i].image_selection = Some(crate::edit_text_ui::ImageSelection::at(page, before_img));
+            // The image controller follows the page's pictures in drawing order, where one behind
+            // the content is not the last: find the new item's own picture.
+            let drawn = self.session.get(id).and_then(|d| {
+                let AddedContent::Image(new) = &d.added().iter().filter(|a| a.page == page).nth(before_added)?.content else { return None };
+                d.page_images(page).iter().position(|picture| picture.object == Some(new.image))
+            });
+            self.views[i].image_selection = Some(crate::edit_text_ui::ImageSelection::at(page, drawn.unwrap_or(before_img)));
             self.quick_tool = crate::QuickTool::EditText;
             self.left = crate::LeftPanel::Tool("edit");
             self.left_open = true;
