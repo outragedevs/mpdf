@@ -613,6 +613,10 @@ fn named_as<'a>(name: &str, s: &'a str) -> &'a str {
 
 /// German for the strings this fork adds, which the shared catalogs don't have.
 const LOCAL_DE: &[(&str, &str)] = &[
+    (
+        "PdfCraft works offline. No telemetry, no account, and no cloud processing.",
+        "PdfCraft funktioniert offline. Keine Telemetrie, kein Konto und keine Cloud-Verarbeitung.",
+    ),
     ("Behind text and images", "Hinter Text und Bildern"),
     ("Add image behind the text", "Bild hinter dem Text hinzufügen"),
     (

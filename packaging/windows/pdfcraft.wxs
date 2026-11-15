@@ -3,7 +3,10 @@
   <?ifndef HasCraftFontLicences ?>
   <?define HasCraftFontLicences=0 ?>
   <?endif?>
-  <Package Name="mPDF" Manufacturer="Merkel" Version="$(var.Version)" UpgradeCode="D90C9D52-7630-40F9-8EE9-1DE532D04606" Scope="perUserOrMachine" Compressed="yes" Language="1033">
+  <!-- mPDF keeps PdfCraft's UpgradeCode, component GUIDs and registry keys on purpose: it takes
+       PdfCraft's place on a machine. Installing it replaces an installed PdfCraft (and the other
+       way round) instead of leaving two products that share one folder and one registration. -->
+  <Package Name="mPDF" Manufacturer="Merkel" Version="$(var.Version)" UpgradeCode="EA00C367-7270-4C50-9D8B-A7A5C88AD27F" Scope="perUserOrMachine" Compressed="yes" Language="1033">
     <SummaryInformation Description="mPDF PDF workbench" Manufacturer="Merkel" />
     <?include $(sys.SOURCEFILEDIR)install-policy.wxi?>
     <!-- HKLM registrations must never point into a per-user installation (#305). Allow removal
@@ -48,7 +51,7 @@
          is removed. Releases from before a menu existed (the PDF one came in 0.7.1, the image one in
          0.4.0) never had the key, so updating from one of them counts as a first install; the
          OnlyDetect rows below tell them apart. A value given on the command line wins. -->
-    <Upgrade Id="D90C9D52-7630-40F9-8EE9-1DE532D04606">
+    <Upgrade Id="EA00C367-7270-4C50-9D8B-A7A5C88AD27F">
       <UpgradeVersion Minimum="0.7.1" IncludeMinimum="yes" OnlyDetect="yes" Property="PDFCONTEXTMENURELEASE" />
       <UpgradeVersion Minimum="0.4.0" IncludeMinimum="yes" OnlyDetect="yes" Property="IMAGECONTEXTMENURELEASE" />
     </Upgrade>

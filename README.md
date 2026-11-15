@@ -11,7 +11,8 @@ mPDF is a PDF editor for Windows that works without any online service. It is a 
 - The interface starts in German. Every other language is still in Preferences.
 - Added images can be placed behind the page's text, and the page's right-click menu has
   **Add image behind the text** and **Add background…**.
-- Its own name, icon and installer identity.
+- Its own name and icon. The installer takes PdfCraft's place: installing mPDF replaces an
+  installed PdfCraft, they do not sit side by side.
 
 A document's own web links still open in the browser, after a confirmation.
 
