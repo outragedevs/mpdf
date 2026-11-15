@@ -1575,3 +1575,39 @@ fn image_paste_and_home_notifications_are_translated() {
         }
     }
 }
+
+/// A build's own name replaces the original one wherever a string says it, and nowhere else.
+#[test]
+fn a_build_with_its_own_name_says_it_in_every_string() {
+    assert_eq!(named_as("mPDF", "About PdfCraft"), "About mPDF");
+    assert_eq!(
+        named_as("mPDF", "Reopen the files that were open when PdfCraft last closed"),
+        "Reopen the files that were open when mPDF last closed"
+    );
+    assert_eq!(named_as("mPDF", "Keyboard shortcuts"), "Keyboard shortcuts", "a string without the name is untouched");
+    assert_eq!(named_as(ORIGINAL_NAME, "About PdfCraft"), "About PdfCraft", "the original keeps its name");
+    // The second ask returns the string kept by the first.
+    assert!(std::ptr::eq(named_as("mPDF", "About PdfCraft"), named_as("mPDF", "About PdfCraft")));
+    assert_eq!(named_as("Other", "About PdfCraft"), "About Other", "another name does not read the first one's strings");
+}
+
+/// The starting language is the one the build names, when it is offered; otherwise the system's.
+#[test]
+fn a_build_starts_in_the_language_it_names() {
+    let named = |language| Brand { name: "mPDF", language };
+    assert_eq!(starting_lang(Some(&named(Some("en")))), Some(Lang::EN));
+    assert_eq!(starting_lang(Some(&named(Some("xx")))), None, "an unknown code falls back to the system language");
+    assert_eq!(starting_lang(Some(&named(None))), None);
+    assert_eq!(starting_lang(None), None);
+}
+
+/// The strings this fork adds have German of their own, used only for German.
+#[test]
+fn the_forks_own_strings_are_in_german() {
+    for (english, german) in LOCAL_DE {
+        assert_ne!(english, german);
+        assert_eq!(english.matches('{').count(), german.matches('{').count(), "{english}: the holes differ");
+        assert_eq!(english.contains("{pages}"), german.contains("{pages}"), "{english}: the page list");
+    }
+    assert_eq!(local(Lang::EN, "Behind text and images"), None);
+}

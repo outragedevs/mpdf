@@ -1,3 +1,5 @@
+// Upstream's own import, kept so its changes apply here; the names it brings in differ by platform.
+#[allow(clippy::wildcard_imports)]
 use super::*;
 use crate::page_keys::PageKeys;
 

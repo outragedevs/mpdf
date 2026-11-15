@@ -1,9 +1,7 @@
-//! Community links: the Discord button is one click away everywhere; Help menu, About dialog and
-//! home screen open the ArtCraft and PdfCraft pages.
+//! The About dialog, and the absence of the original publisher's links and marks.
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use pdfcraft_engine::links;
 use pdfcraft_ui_egui::{Dialog, PdfCraftApp};
 
 fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, PdfCraftApp> {
@@ -17,66 +15,28 @@ fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, P
     h
 }
 
+/// This fork ships no links to the original publisher: not in the top bar, not on the home screen,
+/// and not as Help commands.
 #[test]
-fn discord_button_in_the_top_bar_opens_discord() {
+fn the_interface_has_no_publisher_links() {
     let mut h = harness(|_| {});
-    h.get_by_label("Discord").click();
-    h.run_steps(2);
-    assert_eq!(h.state().last_opened_url.as_deref(), Some(links::DISCORD));
-    assert_eq!(links::DISCORD, "https://discord.gg/artcraft");
-}
-
-#[test]
-fn home_screen_links() {
-    for (label, url) in [
-        ("Join our Discord", links::DISCORD),
-        ("PdfCraft web page", "https://getartcraft.com/apps/pdfcraft"),
-        ("PdfCraft on GitHub", "https://github.com/storytold/pdfcraft"),
-        ("ArtCraft website", "https://getartcraft.com"),
-    ] {
-        let mut h = harness(|_| {});
-        h.get_by_label("Join the ArtCraft community");
-        h.get_by_label(label).click();
-        h.run_steps(2);
-        assert_eq!(h.state().last_opened_url.as_deref(), Some(url), "{label}");
+    for label in ["Discord", "Join our Discord", "Join the ArtCraft community", "PdfCraft web page", "PdfCraft on GitHub", "ArtCraft website"] {
+        assert!(h.query_by_label(label).is_none(), "{label} is still shown");
     }
+    for command in ["help.discord", "help.app_page", "help.github", "help.website", "help.check_updates"] {
+        assert!(pdfcraft_engine::commands::command(command).is_none(), "{command} is still a command");
+        assert!(!h.state_mut().execute(command), "{command} still runs");
+    }
+    assert_eq!(h.state().last_opened_url, None, "nothing was opened");
 }
 
+/// About names where the app comes from in plain text, and shows none of the original's marks.
 #[test]
-fn home_community_card_closes_for_this_run() {
-    let mut h = harness(|_| {});
-    h.get_by_label("Join the ArtCraft community");
-    h.get_by_label("Close").click();
-    h.run_steps(2);
-    assert!(h.state().community_card_closed);
-    assert!(h.query_by_label("Join the ArtCraft community").is_none());
+fn about_dialog_says_what_it_is_based_on_without_the_marks() {
+    let h = harness(|app| app.dialog = Some(Dialog::About));
+    h.get_by_label("Based on PdfCraft by the ArtCraft team.");
+    assert_eq!(h.query_all_by_label("ArtCraft").count(), 0, "a mark or wordmark (alt text) is still shown");
     assert!(h.query_by_label("Join our Discord").is_none());
-    // Not remembered: a fresh app shows the card again.
-    assert!(!PdfCraftApp::new().community_card_closed);
-}
-
-#[test]
-fn about_dialog_shows_the_brand_and_links() {
-    let pdf = b"%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF";
-    // With a document open, so the home screen's own links are not on screen.
-    let mut h = harness(move |app| {
-        app.open_bytes("one.pdf", None, pdf.to_vec()).unwrap();
-        app.dialog = Some(Dialog::About);
-    });
-    assert!(h.query_all_by_label("ArtCraft").count() >= 2, "the mark and the wordmark (alt text)");
-    h.get_by_label("Join our Discord").click();
-    h.run_steps(2);
-    assert_eq!(h.state().last_opened_url.as_deref(), Some(links::DISCORD));
-}
-
-#[test]
-fn help_commands_open_each_link() {
-    for l in links::LINKS {
-        let mut h = harness(|_| {});
-        assert!(h.state_mut().execute(l.command), "{}", l.command);
-        assert_eq!(h.state().last_opened_url.as_deref(), Some(l.url));
-        assert_eq!(pdfcraft_engine::commands::command(l.command).unwrap().menu, Some("Help"));
-    }
 }
 
 /// Runs frames until the node labelled `label` exists and has stopped moving, then returns it.

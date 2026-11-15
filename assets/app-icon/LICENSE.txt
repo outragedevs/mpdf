@@ -1,3 +1,7 @@
+This file covers the original PdfCraft app icon (the lion), which this repository still carries
+only inside the macOS DMG background (packaging/macos/dmg/). The icon files in this directory are
+now the mPDF icon and are NOT covered by it: see docs/brand/LICENSE-brand.txt.
+
 PdfCraft app icon (pdfcraft.svg, pdfcraft-small.svg and every file derived from them in this
 directory: pdfcraft-1024.png, pdfcraft.icns, pdfcraft.ico, hicolor/).
 
