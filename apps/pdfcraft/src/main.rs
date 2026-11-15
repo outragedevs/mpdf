@@ -21,7 +21,7 @@
 //! `--control <file>` enables the UI control channel (off by default): the app listens on a random
 //! loopback port and writes `{"port", "token", "pid"}` to `<file>` (owner-only permissions). The
 //! app doesn't start if it can't.
-//! Agents then drive it with `pdfcraft-cli ui --control <file> <method> …`.
+//! Agents then drive it with `mpdf-cli ui --control <file> <method> …`.
 
 // Release builds on Windows are GUI-subsystem programs, so launching the app doesn't open a console
 // window next to it (#57). `--version` and diagnostics then go nowhere when started from a terminal
@@ -61,9 +61,9 @@ const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/pdfcraft-10
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png");
 
 /// What `-h` / `--help` prints (#4076): a hint, not the full option list (that is this file's
-/// doc comment and the README). Scripts want `pdfcraft-cli`, which never opens a window.
+/// doc comment and the README). Scripts want `mpdf-cli`, which never opens a window.
 const USAGE: &str = "\
-Usage: pdfcraft [options] [files…]
+Usage: mpdf [options] [files…]
 
 Opens the files in the PdfCraft desktop app.
 
@@ -72,13 +72,13 @@ Options:
   --new-window                open a window of its own instead of passing the files to a running PdfCraft
   --create-images [images…]   put the images in one PDF and ask for the page DPI
   --combine files…            add the files to the Combine files tab, of a running PdfCraft if there is one
-  --control <file>            enable the UI control channel (pdfcraft-cli ui --control <file> …)
+  --control <file>            enable the UI control channel (mpdf-cli ui --control <file> …)
   --page N, --zoom 150, --layout continuous, --theme dark, …
                               view settings applied once the files are open
   -h, --help                  print this and exit
   --version                   print the version and exit
 
-To inspect, convert or edit PDFs from a script, use pdfcraft-cli (pdfcraft-cli --help).";
+To inspect, convert or edit PDFs from a script, use mpdf-cli (mpdf-cli --help).";
 
 /// Print `text` for `--help` and `--version`. `println!` would panic on a full or closed
 /// standard output; this exits normally instead.
@@ -92,10 +92,10 @@ fn print_and_exit(text: &str) -> eframe::Result {
 const LEGACY_STORAGE_KEY: &str = "printcraft";
 
 /// The preferences folder (`app.ron`, docs/development.md). In portable mode
-/// it is `PdfCraftData` beside the executable (#157). XDG desktops use the configuration base;
-/// other platforms retain eframe's PdfCraft folder. Logs and recovery stay in the data folder.
+/// it is `mPDFData` beside the executable (#157). XDG desktops use the configuration base;
+/// other platforms retain eframe's mPDF folder. Logs and recovery stay in the data folder.
 fn settings_dir() -> Option<std::path::PathBuf> {
-    let legacy = eframe::storage_dir("PdfCraft");
+    let legacy = eframe::storage_dir("mPDF");
     match settings::directory(
         cfg!(all(unix, not(target_os = "macos"))),
         pdfcraft_ui_egui::portable::data_dir(),
@@ -107,35 +107,6 @@ fn settings_dir() -> Option<std::path::PathBuf> {
         Err(e) => {
             log::warn!("could not migrate preferences to the XDG configuration folder; using the original location: {e}");
             legacy
-        }
-    }
-}
-
-/// Move the settings and crash-recovery folders of the app's former name, PrintCraft, to the new
-/// name once, so an upgrade keeps recent files, preferences and unsaved work. Best effort: a
-/// folder is left alone when the new one already exists or the move fails. A portable copy leaves
-/// the per-user folders alone.
-fn migrate_legacy_folders() {
-    if pdfcraft_ui_egui::portable::data_dir().is_some() {
-        return;
-    }
-    let mut moves = vec![(eframe::storage_dir("PrintCraft"), eframe::storage_dir("PdfCraft"))];
-    // Recovery lives in the settings folder except on Windows, where it is under %LOCALAPPDATA%.
-    if cfg!(windows) {
-        let local = std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
-        moves.push((local.as_ref().map(|d| d.join("PrintCraft")), local.map(|d| d.join("PdfCraft"))));
-    }
-    for (old, new) in moves {
-        let (Some(old), Some(new)) = (old, new) else { continue };
-        if !old.is_dir() || new.exists() {
-            continue;
-        }
-        if let Some(parent) = new.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match std::fs::rename(&old, &new) {
-            Ok(()) => log::info!("moved {} to {}", old.display(), new.display()),
-            Err(e) => log::warn!("moving {} to {}: {e}", old.display(), new.display()),
         }
     }
 }
@@ -171,7 +142,7 @@ fn path_from_arg(arg: String) -> String {
     String::from_utf8(out).unwrap_or(arg)
 }
 
-/// Some programs start the PDF reader with the path unquoted (`pdfcraft.exe P:\Docs\01 Contract.PDF`),
+/// Some programs start the PDF reader with the path unquoted (`mpdf.exe P:\Docs\01 Contract.PDF`),
 /// so a path with spaces arrives split into several arguments (Acrobat accepts this). When an
 /// argument names no file but it and the ones after it, joined with one space, do, rejoin them
 /// (the longest such run). Anything else is kept as given. Runs of several spaces can't be recovered: the split has lost them.
@@ -224,7 +195,7 @@ fn main() -> eframe::Result {
     }));
     let mut startup = startup::Arguments::parse(std::env::args().skip(1));
     if startup.version {
-        return print_and_exit(&format!("pdfcraft {}", pdfcraft_engine::build_info::version()));
+        return print_and_exit(&format!("mpdf {}", pdfcraft_engine::build_info::version()));
     }
     if startup.help {
         return print_and_exit(USAGE);
@@ -235,15 +206,16 @@ fn main() -> eframe::Result {
     let integrated = cfg!(target_os = "macos");
     // GNOME on Wayland leaves the window frame to the app (src/decorations.rs).
     let window_controls = if cfg!(any(target_os = "macos", target_os = "windows")) { None } else { decorations::app_drawn() };
-    migrate_legacy_folders();
     // The log file stays in the data folder; opened after the arguments (so `--version` leaves
-    // no file behind) and after the PrintCraft migration (which a fresh folder would block).
+    // no file behind).
     // Records logged until now are written to it first.
     if let (Some(logger), Some(dir)) =
-        (logger, pdfcraft_ui_egui::portable::data_dir().map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir("PdfCraft")))
+        (logger, pdfcraft_ui_egui::portable::data_dir().map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir("mPDF")))
     {
         match logger.attach_dir(&dir.join("logs")) {
-            Ok(path) => log::info!("PdfCraft {}, log file {}", pdfcraft_engine::build_info::version(), path.display()),
+            Ok(path) => {
+                log::info!("{} {}, log file {}", pdfcraft_ui_egui::i18n::product_name(), pdfcraft_engine::build_info::version(), path.display())
+            }
             // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.
             Err(e) => log::warn!("no log file: {e}"),
         }

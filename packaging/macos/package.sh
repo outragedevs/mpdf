@@ -63,9 +63,11 @@ fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/bin"
+# Cargo builds the programs as mpdf and mpdf-cli; this package still stages them under the names
+# the rest of this script uses.
 for bin in pdfcraft pdfcraft-cli; do
   inputs=()
-  for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
+  for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/mpdf${bin#pdfcraft}"); done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
   lipo -info "$WORK/bin/$bin"
 done

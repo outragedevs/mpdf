@@ -11,8 +11,11 @@ disagree, this section wins.
 - **Upstream is read-only.** `upstream` is fetched and never pushed to. Changes are carried over
   from it by hand, release by release, after review and tests. Nothing here is proposed back
   from this repository.
-- **Names.** The interface says mPDF (`i18n::set_brand` in `apps/pdfcraft/src/main.rs`); crate,
-  binary and folder names stay `pdfcraft`, so changes from upstream apply with few conflicts.
+- **Names.** The interface says mPDF (`i18n::set_brand` in `apps/pdfcraft/src/main.rs`); the
+  executables are `mpdf` and `mpdf-cli` (`[[bin]]` in the two app manifests), the data folders
+  are `mPDF` (`mPDFData` in a portable copy) and the log is `mpdf.log`. Crate and package names
+  stay `pdfcraft`, as do the `PDFCRAFT_*` environment variables, so changes from upstream apply
+  with few conflicts. mPDF does not read or move a PdfCraft installation's settings.
   Strings this fork adds get their German in `LOCAL_DE` (`crates/ui-egui/src/i18n.rs`).
 - **CI.** The only workflow is `.github/workflows/build-windows.yml`. The rules below about
   shared `craft-common-actions` workflows, upstream issues and pull-request etiquette describe
