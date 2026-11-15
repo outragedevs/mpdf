@@ -161,7 +161,7 @@ try {
   $machineRoot = if ((Get-PackageTemplate $database) -match '^Intel') {
     if (Get-SessionProperty $session 'VersionNT64') { ${env:ProgramFiles(x86)} } else { $env:ProgramFiles }
   } elseif ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
-  $machineFolder = (Join-Path $machineRoot "Merkel\$($policy.name)") + '\'
+  $machineFolder = (Join-Path $machineRoot "Merkel\mPDF") + '\'
   foreach ($scope in @('1', '')) {
     Set-SessionProperty $session 'ALLUSERS' $scope
     Set-SessionProperty $session 'INSTALLFOLDER' ''
@@ -171,7 +171,7 @@ try {
       if ($session.EvaluateCondition($row[2]) -eq 1 -and $session.DoAction($row[0]) -ne 1) { throw "$($row[0]) failed." }
     }
     $folder = Get-SessionProperty $session 'INSTALLFOLDER'
-    $wanted = if ($scope -eq '1') { $machineFolder } else { (Join-Path $env:LOCALAPPDATA "Programs\Merkel\$($policy.name)") + '\' }
+    $wanted = if ($scope -eq '1') { $machineFolder } else { (Join-Path $env:LOCALAPPDATA "Programs\Merkel\mPDF") + '\' }
     if ($folder -ine $wanted) { throw "Wizard default folder for ALLUSERS='$scope' is '$folder', expected '$wanted'." }
   }
   $execute = @{}
