@@ -1,0 +1,83 @@
+# Builds mPDF for Windows x64 with packaging/windows/package.ps1 and publishes the MSI and the
+# portable zip as a pre-release, so they can be downloaded for testing. The files are not signed.
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+      PDFCRAFT_BUILD_LABEL: mpdf
+      PDFCRAFT_BUILD_SHA: ${{ github.sha }}
+      # Fail instead of shipping an exe without its icon and version resources.
+      PDFCRAFT_REQUIRE_WINRES: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read the pinned translations revision
+        id: i18n
+        shell: bash
+        run: echo "rev=$(tr -d '[:space:]' < craft-i18n.rev)" >> "$GITHUB_OUTPUT"
+      - name: Check out the translations
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ steps.i18n.outputs.rev }}
+          path: craft-i18n
+      - name: Check out craft-fonts
+        uses: storytold/craft-common-actions/actions/checkout-craft-fonts@main
+        with:
+          # The pin upstream's release of this version uses.
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: windows-x64
+      - name: Install WiX
+        uses: storytold/craft-common-actions/actions/install-wix@main
+        with:
+          wix-version: "5.0.2"
+      - name: Build and package
+        shell: pwsh
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
+          # German is the starting language: a build without the catalogs must fail.
+          CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+          CRAFT_I18N_REQUIRED: "1"
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mpdf-windows-x64
+          path: dist/release/*
+          if-no-files-found: error
+      - name: Publish as a pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short="${GITHUB_SHA::8}"
+          gh release create "build-$short" dist/release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "mPDF test build $short (Windows x64)" \
+            --notes "Unsigned test build of main at $GITHUB_SHA. Windows SmartScreen will warn because the files are not signed."

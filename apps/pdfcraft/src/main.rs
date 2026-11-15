@@ -201,13 +201,10 @@ fn rejoin_split_paths(args: Vec<String>, exists: impl Fn(&str) -> bool) -> Vec<S
 }
 
 fn main() -> eframe::Result {
-    // Windows: the update helper is a copy of this program started with `--finish-update`.
-    #[cfg(windows)]
-    if let Some(result) = craft_update::self_update::finish(&pdfcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
-        std::process::exit(i32::from(result.is_err()));
-    }
     // First, so the panic hook and every start-up warning are recorded (`logging`).
     let logger = logging::install();
+    // This build's name and starting language, before anything is shown.
+    pdfcraft_ui_egui::i18n::set_brand(pdfcraft_ui_egui::i18n::Brand { name: "mPDF", language: Some("de") });
     // Last-resort guard (AGENTS.md §4): commands, edits, opens and saves catch panics and report
     // them; this hook logs every panic, caught or not, with a backtrace when RUST_BACKTRACE is set.
     std::panic::set_hook(Box::new(|info| {
@@ -334,7 +331,7 @@ fn retry_with_gl(choice: RendererChoice, app_started: bool) -> bool {
 /// The window and renderer settings for one run.
 fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("PdfCraft")
+        .with_title(pdfcraft_ui_egui::i18n::product_name())
         .with_inner_size([1440.0, 920.0])
         .with_min_inner_size(pdfcraft_ui_egui::MIN_WINDOW_SIZE)
         .with_drag_and_drop(true)
@@ -473,7 +470,6 @@ fn app_creator<'a>(
             }
             app.motion.source = Some(motion::source());
         }
-        app.set_startup_update_check(true);
         app.printer_source = Some(pdfcraft_ui_egui::system_printers());
         app.two_sided_source = Some(pdfcraft_ui_egui::system_two_sided());
         app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));

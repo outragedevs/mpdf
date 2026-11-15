@@ -37,10 +37,13 @@ pub const ALLOWED_LICENCES: &[&str] = &[
 ];
 
 /// The closed list of Adobe-authored, non-visual technical data (AGENTS.md §1.1): (crate, path).
-/// Storyteller's own brand marks (the ArtCraft name and logos): shipped in the app and docs, but
-/// not licensed for reuse by forks. Allowed only for `kind = "logo"` entries under `docs/brand/`
-/// (AGENTS.md §1.2).
-pub const BRAND_LICENCE: &str = "LicenseRef-Storyteller-Trademark";
+/// Merkel's own brand marks (the "m" signet and the app icon built from it): shipped in the app,
+/// but not licensed for reuse. Allowed only for `kind = "logo"` entries under `docs/brand/` and
+/// `assets/app-icon/` (docs/brand/LICENSE-brand.txt).
+pub const BRAND_LICENCE: &str = "LicenseRef-Merkel-Trademark";
+
+/// Where a [`BRAND_LICENCE`] file may live.
+const BRAND_DIRS: &[&str] = &["docs/brand/", "assets/app-icon/"];
 
 pub const ADOBE_DATA_ALLOWED: &[(&str, &str)] = &[("hayro-cmap", "assets/cmaps.brotli"), ("hayro-interpret", "src/font/generated/metrics.rs")];
 
@@ -247,7 +250,7 @@ pub fn check(root: &Path, m: &Manifest, repo_files: &[String], lock: &BTreeSet<(
         if !seen.insert(a.path.clone()) {
             problems.push(format!("{}: listed twice", a.path));
         }
-        let brand = a.licence == BRAND_LICENCE && a.kind == "logo" && a.path.starts_with("docs/brand/");
+        let brand = a.licence == BRAND_LICENCE && a.kind == "logo" && BRAND_DIRS.iter().any(|dir| a.path.starts_with(dir));
         if !brand {
             licence_ok(&a.path, &a.licence, &mut problems);
         }
@@ -568,11 +571,12 @@ mod tests {
     fn brand_licence_only_for_brand_logos() {
         let root = super::root();
         for (path, kind, pass) in [
-            ("docs/brand/artcraft-mark.svg", "logo", true),
-            ("docs/brand/artcraft-mark.svg", "icon", false),
+            ("docs/brand/mark.svg", "logo", true),
+            ("assets/app-icon/pdfcraft.svg", "logo", true),
+            ("docs/brand/mark.svg", "icon", false),
             ("assets/icons/mark.svg", "logo", false),
         ] {
-            let mut a = asset(path, "Storyteller", kind, BRAND_LICENCE);
+            let mut a = asset(path, "Merkel", kind, BRAND_LICENCE);
             a.licence_file = "docs/brand/LICENSE-brand.txt".into();
             let m = Manifest { asset: vec![a], ..Default::default() };
             let p = check(&root, &m, &[], &BTreeSet::new());

@@ -58,7 +58,7 @@
       "-1",
       "Software\\Classes\\Applications\\pdfcraft.exe",
       "FriendlyAppName",
-      "PdfCraft"
+      "mPDF"
     ],
     [
       "-1",
@@ -82,7 +82,7 @@
       "-1",
       "Software\\PdfCraft\\Capabilities",
       "ApplicationName",
-      "PdfCraft"
+      "mPDF"
     ],
     [
       "-1",

@@ -4851,6 +4851,8 @@ fn default_page_context_menu_when_not_in_edit_mode() {
     assert!(h.query_all_by_label("Add comment").next().is_some());
     assert!(h.query_all_by_label("Add text").next().is_some());
     assert!(h.query_all_by_label("Add image").next().is_some());
+    h.get_by_label("Add image behind the text");
+    h.get_by_label("Add background…");
     assert!(h.query_all_by_label_contains("Copy").next().is_some());
     assert!(h.query_all_by_label_contains("Paste").next().is_some());
 
@@ -4858,6 +4860,44 @@ fn default_page_context_menu_when_not_in_edit_mode() {
     h.get_by_label("Edit this PDF").click();
     h.run_steps(2);
     assert_eq!(h.state().quick_tool, pdfcraft_ui_egui::QuickTool::EditText);
+}
+
+/// The page's own menu reaches the two things done most often here: an image under the page's text,
+/// and Add background.
+#[test]
+fn the_page_menu_adds_an_image_behind_the_text_and_opens_add_background() {
+    let dir = std::env::temp_dir().join(format!("pdfcraft-page-menu-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("under.png");
+    let mut png = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png, 30, 20);
+        enc.set_color(png::ColorType::Rgb);
+        enc.write_header().unwrap().write_image_data(&[120; 1800]).unwrap();
+    }
+    std::fs::write(&file, png).unwrap();
+    let picked = file.to_string_lossy().into_owned();
+    let mut h = harness(1, move |app| app.save_override = Some(picked));
+    let at = h.state().views[0].page_screen_rect(0).expect("on screen").center();
+
+    right_click_at(&mut h, at);
+    h.get_by_label("Add image behind the text").click();
+    h.run_steps(4);
+    let s = h.state();
+    let added = s.session.get(s.views[0].id).unwrap().added().to_vec();
+    assert_eq!(added.len(), 1, "the picked image was added");
+    assert!(matches!(&added[0].content, pdfcraft_engine::AddedContent::Image(i) if i.behind), "under the page's text");
+    assert_eq!(s.views[0].content.selected, Some((0, 0)));
+
+    // Back to the tool whose menu this is: the image's own menu answers a click on it otherwise.
+    h.state_mut().quick_tool = pdfcraft_ui_egui::QuickTool::Select;
+    h.run_steps(2);
+    let corner = h.state().views[0].page_screen_rect(0).expect("on screen").left_top() + egui::vec2(12.0, 12.0);
+    right_click_at(&mut h, corner);
+    h.get_by_label("Add background…").click();
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Marks(pdfcraft_engine::MarkKind::Background)));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -4894,6 +4934,8 @@ fn page_context_menu_items_disabled_on_protected_pdf() {
     assert!(is_disabled(&mut h, "Edit this PDF"), "Edit this PDF should be disabled on protected document");
     assert!(is_disabled(&mut h, "Add text"), "Add text should be disabled");
     assert!(is_disabled(&mut h, "Add image"), "Add image should be disabled");
+    assert!(is_disabled(&mut h, "Add image behind the text"), "Add image behind the text should be disabled");
+    assert!(is_disabled(&mut h, "Add background…"), "Add background should be disabled");
     assert!(is_disabled(&mut h, "Delete page"), "Delete page should be disabled");
     assert!(is_disabled(&mut h, "Add comment"), "Add comment should be disabled");
     assert!(is_disabled(&mut h, "Add bookmark"), "Add bookmark should be disabled");
@@ -10260,6 +10302,7 @@ fn clicking_after_image_context_menu_action_resets_menu_state_and_updates_select
         rect: Some([50.0, 10.0, 70.0, 30.0]),
         name: "img2.png".into(),
         bytes: std::sync::Arc::new(png2),
+        behind: false,
     });
     h.run_steps(4);
 

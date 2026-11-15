@@ -33,8 +33,8 @@
 //!   translators may reorder placeholders freely.
 
 use std::cell::Cell;
-use std::collections::HashSet;
-use std::sync::{LazyLock, OnceLock};
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex, OnceLock, PoisonError};
 
 use craft_i18n::I18n;
 
@@ -390,6 +390,11 @@ pub fn system_lang() -> Lang {
     if cfg!(test) {
         return Lang::EN;
     }
+    // A build that names a starting language uses it instead of the system's (when its catalog
+    // is embedded); Preferences still offers every language.
+    if let Some(lang) = starting_lang(BRAND.get()) {
+        return lang;
+    }
     static SYSTEM: OnceLock<Lang> = OnceLock::new();
     *SYSTEM.get_or_init(detect_system_lang)
 }
@@ -540,7 +545,100 @@ pub fn key_name(s: &str) -> &str {
 
 /// Translate an English UI string; unknown strings come back unchanged.
 pub fn tr(lang: Lang, s: &str) -> &str {
-    lang.i18n().t(lang.lang, s)
+    let said = lang.i18n().t(lang.lang, s);
+    named(if said == s { local(lang, s).unwrap_or(said) } else { said })
+}
+
+/// The language `brand` starts in, if it names one whose catalog is embedded.
+fn starting_lang(brand: Option<&Brand>) -> Option<Lang> {
+    brand.and_then(|b| b.language).and_then(Lang::from_code)
+}
+
+/// The name the interface strings are written with.
+const ORIGINAL_NAME: &str = "PdfCraft";
+
+/// What a build of this fork calls itself and the language it starts in.
+#[derive(Clone, Copy, Debug)]
+pub struct Brand {
+    /// Shown wherever the interface says the app's name.
+    pub name: &'static str,
+    /// The language code used while the `language` preference follows the system; `None` keeps
+    /// the system language.
+    pub language: Option<&'static str>,
+}
+
+/// Unset in the library as tests link it: they find the interface by its original English labels.
+static BRAND: OnceLock<Brand> = OnceLock::new();
+
+/// Name the app and choose its starting language. The desktop app calls this once, before the
+/// first frame; a later call changes nothing.
+pub fn set_brand(brand: Brand) {
+    let _ = BRAND.set(brand);
+}
+
+/// The app's name as the interface shows it.
+pub fn product_name() -> &'static str {
+    BRAND.get().map_or(ORIGINAL_NAME, |b| b.name)
+}
+
+/// The most strings [`named`] keeps. Interface strings are a fixed set far below this; the cap
+/// only bounds the memory if a caller ever passes text of its own.
+const NAMED_LIMIT: usize = 4096;
+
+/// `s` with the app's name in place of the original one, when [`set_brand`] gave one.
+fn named(s: &str) -> &str {
+    BRAND.get().map_or(s, |brand| named_as(brand.name, s))
+}
+
+/// [`named`] for a given `name`.
+fn named_as<'a>(name: &str, s: &'a str) -> &'a str {
+    if name == ORIGINAL_NAME || !s.contains(ORIGINAL_NAME) {
+        return s;
+    }
+    static NAMED: LazyLock<Mutex<HashMap<String, &'static str>>> = LazyLock::new(Mutex::default);
+    let mut kept = NAMED.lock().unwrap_or_else(PoisonError::into_inner);
+    // One build has one name; the name is in the key so a second one can't read the first's.
+    let key = format!("{name}\u{0}{s}");
+    if let Some(known) = kept.get(&key) {
+        return known;
+    }
+    if kept.len() >= NAMED_LIMIT {
+        return s;
+    }
+    // Kept for the life of the process, like the catalogs: callers hold these as borrowed strings.
+    let renamed: &'static str = Box::leak(s.replace(ORIGINAL_NAME, name).into_boxed_str());
+    kept.insert(key, renamed);
+    renamed
+}
+
+/// German for the strings this fork adds, which the shared catalogs don't have.
+const LOCAL_DE: &[(&str, &str)] = &[
+    (
+        "PdfCraft works offline. No telemetry, no account, and no cloud processing.",
+        "PdfCraft funktioniert offline. Keine Telemetrie, kein Konto und keine Cloud-Verarbeitung.",
+    ),
+    ("Behind text and images", "Hinter Text und Bildern"),
+    ("Add image behind the text", "Bild hinter dem Text hinzufügen"),
+    (
+        "A picture covers this page (a scan?), so the image behind its text won't show.",
+        "Ein Bild bedeckt diese Seite (ein Scan?), deshalb ist das Bild hinter dem Text nicht zu sehen.",
+    ),
+    (
+        "Page {pages} changed after an image was put behind its text, so its own white backdrop stays off. It looks the same on white paper.",
+        "Seite {pages} wurde geändert, nachdem ein Bild hinter den Text gelegt wurde; ihr eigener weißer Hintergrund bleibt deshalb aus. Auf weißem Papier sieht sie gleich aus.",
+    ),
+    (
+        "Pages {pages} changed after an image was put behind their text, so their own white backdrops stay off. They look the same on white paper.",
+        "Die Seiten {pages} wurden geändert, nachdem ein Bild hinter den Text gelegt wurde; ihre eigenen weißen Hintergründe bleiben deshalb aus. Auf weißem Papier sehen sie gleich aus.",
+    ),
+];
+
+/// This fork's own translation of `s`, for a string the catalogs returned untranslated.
+fn local(lang: Lang, s: &str) -> Option<&'static str> {
+    if lang.code() != "de" {
+        return None;
+    }
+    LOCAL_DE.iter().find(|(english, _)| *english == s).map(|(_, german)| *german)
 }
 
 /// How the layers below say their own sentences in the current language.
@@ -556,7 +654,7 @@ pub fn words(wording: &str) -> String {
 
 /// Like [`tr`], for an English string that needs a disambiguating `context`.
 pub fn tr_ctx<'a>(lang: Lang, context: &str, s: &'a str) -> &'a str {
-    lang.i18n().tc(lang.lang, context, s)
+    named(lang.i18n().tc(lang.lang, context, s))
 }
 
 /// A string keyed by its command id, falling back to the translation of the English `label`. Only

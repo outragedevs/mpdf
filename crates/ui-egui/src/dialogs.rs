@@ -112,7 +112,6 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
     link_prompt(app, ctx);
     remote_link_prompt(app, ctx);
     full_screen_prompt(app, ctx);
-    crate::updates::dialog(app, ctx);
     if app.dialog != Some(Dialog::WordCount) {
         app.word_count_draft.cancel();
     }
@@ -524,7 +523,7 @@ fn dialog_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, dialog: Dialog, req: &m
             }
         }
         Dialog::About => {
-            if !dialog_about(ui, req) {
+            if !dialog_about(ui) {
                 return false;
             }
         }
@@ -1650,7 +1649,7 @@ fn dialog_shortcuts(ui: &mut egui::Ui) -> bool {
 }
 
 /// `Dialog::About` content. Returns `false` when it has its own buttons and no footer is wanted.
-fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
+fn dialog_about(ui: &mut egui::Ui) -> bool {
     let t = Tokens::get(ui.ctx());
     // Tabs About · Contributors · Models.
     let tab_id = egui::Id::unique("about_tab");
@@ -1669,13 +1668,8 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
         1 => crate::credits::contributors_ui(ui),
         2 => crate::credits::models_ui(ui),
         _ => {
-            ui.horizontal(|ui| {
-                widgets::artcraft_mark(ui, 40.0);
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("PdfCraft").font(theme::semibold(20.0)));
-                    ui.label(crate::i18n::fmt(tl!("Version {v}"), &[("v", &pdfcraft_engine::build_info::version())]));
-                });
-            });
+            ui.label(egui::RichText::new(crate::i18n::product_name()).font(theme::semibold(20.0)));
+            ui.label(crate::i18n::fmt(tl!("Version {v}"), &[("v", &pdfcraft_engine::build_info::version())]));
             ui.add_space(6.0);
             ui.label(tl!("A clean-room, open-source PDF application written in Rust. MIT OR Apache-2.0."));
             ui.label(
@@ -1686,14 +1680,8 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
                 .small(),
             );
             ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(tl!("Part of")).color(t.text_muted));
-                widgets::artcraft_logo(ui, 16.0);
-            });
-            ui.add_space(6.0);
-            if let Some(cmd) = widgets::community_links(ui) {
-                req.link_command = Some(cmd);
-            }
+            // Plain text, as the brand terms of the original allow a modified version to say.
+            ui.label(egui::RichText::new("Based on PdfCraft by the ArtCraft team.").color(t.text_muted).small());
         }
     }
     true
