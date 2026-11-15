@@ -3,11 +3,11 @@ use super::{CliError, Duration, stdout_line};
 
 // ---- UI control channel client -----------------------------------------------------------------
 
-/// One request to a running app's control channel (`pdfcraft --control FILE`).
+/// One request to a running app's control channel (`mpdf --control FILE`).
 pub(crate) fn ui(args: &[String]) -> Result<(), CliError> {
     validate_options("ui", args, UI_OPTIONS)?;
     use std::io::{BufRead, BufReader, Write as _};
-    let file = flag(args, "--control").ok_or("ui: missing --control FILE (start the app with `pdfcraft --control FILE`)")?;
+    let file = flag(args, "--control").ok_or("ui: missing --control FILE (start the app with `mpdf --control FILE`)")?;
     let info = read_control_file(file)?;
     let port = info["port"].as_u64().ok_or(format!("{file}: no port"))?;
     // Refused rather than truncated, which would quietly reach some other port.
@@ -52,13 +52,13 @@ const CONTROL_FILE_MAX: u64 = 64 * 1024;
 
 #[cfg(not(windows))]
 const CONTROL_FILE_ADVICE: &str =
-    "Start the app with a control file in a folder only you can write, such as `pdfcraft --control ~/.pdfcraft-control.json`";
+    "Start the app with a control file in a folder only you can write, such as `mpdf --control ~/.pdfcraft-control.json`";
 // cmd.exe doesn't expand `~` (#3922).
 #[cfg(windows)]
 const CONTROL_FILE_ADVICE: &str =
-    r"Start the app with a control file in a folder only you can write, such as `pdfcraft --control %USERPROFILE%\.pdfcraft-control.json`";
+    r"Start the app with a control file in a folder only you can write, such as `mpdf --control %USERPROFILE%\.pdfcraft-control.json`";
 
-/// Read the file written by `pdfcraft --control FILE`.
+/// Read the file written by `mpdf --control FILE`.
 ///
 /// It names the port that receives the token and every command, typed text included, so it must
 /// be the user's own. In a shared folder such as `/tmp`, another local user can create the file
@@ -142,7 +142,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn on_windows_a_control_file_other_users_can_read_is_refused() {
-        let dir = std::env::temp_dir().join(format!("pdfcraft-cli-control-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mpdf-cli-control-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let users = std::process::Command::new("icacls").arg(&dir).arg("/grant").arg("*S-1-5-32-545:(OI)(CI)R").output().unwrap();

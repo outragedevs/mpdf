@@ -7,11 +7,11 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const BIN: &str = env!("CARGO_BIN_EXE_pdfcraft-cli");
+const BIN: &str = env!("CARGO_BIN_EXE_mpdf-cli");
 
 /// A fresh folder for one test, so the tests can run in parallel and leave nothing behind.
 fn workdir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-exit-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mpdf-cli-exit-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
