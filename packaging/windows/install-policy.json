@@ -1,7 +1,7 @@
 {
   "id": "pdfcraft",
   "name": "PdfCraft",
-  "upgradeCode": "EA00C367-7270-4C50-9D8B-A7A5C88AD27F",
+  "upgradeCode": "D90C9D52-7630-40F9-8EE9-1DE532D04606",
   "sources": [
     "pdfcraft.wxs",
     "installer-ui.wxs"
@@ -58,7 +58,7 @@
       "-1",
       "Software\\Classes\\Applications\\pdfcraft.exe",
       "FriendlyAppName",
-      "PdfCraft"
+      "mPDF"
     ],
     [
       "-1",
@@ -82,7 +82,7 @@
       "-1",
       "Software\\PdfCraft\\Capabilities",
       "ApplicationName",
-      "PdfCraft"
+      "mPDF"
     ],
     [
       "-1",
