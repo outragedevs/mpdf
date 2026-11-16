@@ -15,6 +15,11 @@
 //! Otherwise the fill stays off, and [`backdrops_left_off`] names those pages. A picture can't be
 //! replaced without losing it, so it is only reported.
 //!
+//! Some writers paint the backdrop more than once (a print driver's white page, then the same
+//! again inside a clip). Each fill is replaced in turn, as long as the next thing painted is
+//! another one: the copy made for a later fill carries the earlier copy's tag as `/Prev`, and
+//! [`restore`] turns them back on last first, each under the same checks.
+//!
 //! The tag holds no page content and no reference that keeps another object alive (`/Was` is two
 //! numbers, not a reference): a reference to the original stream would keep text in the file
 //! that a redaction, Remove Hidden Information or Edit Text removed from the copy.
@@ -42,6 +47,9 @@ const SCAN_BYTES: usize = 64 * 1024;
 const SCAN_OPS: usize = 4096;
 /// How far (in points) a backdrop may fall short of the crop box and still count as covering it.
 const COVER_EPS: f64 = 1.0;
+/// How many white fills, one after the other, are replaced on one page; a page with more keeps
+/// the rest, and so stays hidden behind them.
+const MAX_FILLS: usize = 8;
 /// Components at least this close to white (per channel) count as white: a near-white fill
 /// (`0.99 g`) is a backdrop too, and replacing it changes the page by at most 2%.
 const WHITE: f64 = 0.98;
@@ -166,9 +174,29 @@ fn left_off(doc: &Document, p: &pdfcraft_model::Page) -> bool {
     list.iter().any(copy) && !keeps_backdrop_off(doc, &list)
 }
 
-/// Replace `page`'s white backdrop fill, if it has one (see the module doc). Returns whether it
-/// did; when it did, `page` no longer matches the document. A picture backdrop is left alone.
+/// Replace `page`'s white backdrop fills, if it has any (see the module doc): the first, and each
+/// one painted straight after it. Returns whether it replaced one; when it did, `page` no longer
+/// matches the document. A picture backdrop is left alone.
 pub(crate) fn replace(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<bool, EditError> {
+    if !replace_one(doc, page)? {
+        return Ok(false);
+    }
+    for _ in 1..MAX_FILLS {
+        let Some(now) = current(doc, page) else { break };
+        if !replace_one(doc, &now)? {
+            break;
+        }
+    }
+    Ok(true)
+}
+
+/// `page` as the document has it now, after a change to its content list.
+fn current(doc: &Document, page: &pdfcraft_model::Page) -> Option<pdfcraft_model::Page> {
+    pdfcraft_model::pages(doc).into_iter().find(|p| p.obj == page.obj)
+}
+
+/// Replace the white fill `page` paints first, if it paints one. Returns whether it did.
+fn replace_one(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<bool, EditError> {
     let Some((Backdrop::Fill, Some(found))) = scan(doc, page, None) else { return Ok(false) };
     let Some((piece, at)) = found.place() else { return Ok(false) };
     let op = found.pieces.data().get(found.op.clone()).unwrap_or_default().to_vec();
@@ -188,6 +216,11 @@ pub(crate) fn replace(doc: &mut Document, page: &pdfcraft_model::Page) -> Result
     // the old encoding; `scan` refused streams whose bytes live in an external file (`/F`).
     let Object::Stream(source) = &*doc.get(original) else { return Ok(false) };
     let mut dict = source.dict.clone();
+    // A stream that is itself a copy, for a fill painted before this one: its tag goes along, so
+    // that fill can be turned back on once this one is.
+    if let Some(earlier) = source.dict.get(TAG).map(|t| doc.resolve(t)).and_then(|t| t.as_dict().cloned()) {
+        note.set(b"Prev".to_vec(), Object::Dict(earlier));
+    }
     for key in [&b"Length"[..], b"DL", TAG] {
         dict.remove(key);
     }
@@ -210,7 +243,23 @@ pub(crate) fn replace(doc: &mut Document, page: &pdfcraft_model::Page) -> Result
 /// Turn the fills [`replace`] turned off on `page` back on, where [`restored_copy`] finds that
 /// safe; a copy listed in several slots is restored in each. Returns how many slots it restored.
 /// A copy it can't restore stays as it is, tag and all, so [`backdrops_left_off`] names its page.
+/// Where several fills were replaced one after the other, the last comes back first, then the
+/// one before it, until the page is as it was or one can't be restored.
 pub(crate) fn restore(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<usize, EditError> {
+    let restored = restore_pass(doc, page)?;
+    if restored > 0 {
+        for _ in 1..MAX_FILLS {
+            let Some(now) = current(doc, page) else { break };
+            if restore_pass(doc, &now)? == 0 {
+                break;
+            }
+        }
+    }
+    Ok(restored)
+}
+
+/// One round of [`restore`]: every tagged copy on the page gets the fill its tag names back.
+fn restore_pass(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<usize, EditError> {
     let mut list = crate::place::contents(doc, page)?;
     // Per copy: the stream that takes its place, or `None` when it stays.
     let mut done: Vec<(ObjRef, Option<ObjRef>)> = Vec::new();
@@ -286,6 +335,10 @@ fn restored_copy(doc: &Document, page: &pdfcraft_model::Page, copy: ObjRef) -> O
     let mut dict = s.dict.clone();
     for key in [&b"Length"[..], b"DL", TAG] {
         dict.remove(key);
+    }
+    // A fill replaced before this one is still off: the stream stays a copy, under that fill's tag.
+    if let Some(earlier) = note.get(b"Prev").and_then(Object::as_dict) {
+        dict.set(TAG.to_vec(), Object::Dict(earlier.clone()));
     }
     let was = match note.get(b"Was").and_then(Object::as_array).map(Vec::as_slice) {
         Some([num, generation]) => Some(ObjRef { num: u32::try_from(num.as_int()?).ok()?, generation: u16::try_from(generation.as_int()?).ok()? }),

@@ -672,6 +672,48 @@ fn an_image_behind_the_text_turns_the_backdrop_off_until_nothing_behind_needs_it
     assert_eq!(page_backdrop(&doc, 0).unwrap(), Some(Backdrop::Fill));
 }
 
+/// A print driver's page: white over the page, then white again inside a clip, then the content.
+/// Replacing only the first would leave the second over whatever goes behind.
+const TWICE: &str = "q 1 g 0 0 300 200 re f Q q 0 .2 300 200 re W* n 1 g 0 -.3 300.5 200.5 re f Q";
+const TWICE_OFF: &str = "q 1 g 0 0 300 200 re n Q q 0 .2 300 200 re W* n 1 g 0 -.3 300.5 200.5 re n Q";
+
+#[test]
+fn a_backdrop_painted_twice_is_replaced_whole_and_comes_back_whole() {
+    let content = format!("{TWICE} {TEXT}");
+    let mut doc = page(&[&content]);
+    let original = streams(&doc);
+    add_background(&mut doc, &[0], &red(), false).unwrap();
+    assert_eq!(kinds(&doc), ["Background", "copy"]);
+    assert_eq!(streams(&reopen(&doc))[1], format!("{TWICE_OFF} {TEXT}"), "both fills are off, nothing else changed");
+    assert_eq!(page_backdrop(&doc, 0).unwrap(), None, "nothing hides the background now");
+    assert_eq!(remove_marks(&mut doc, &[0], MarkKind::Background).unwrap(), 1);
+    assert_eq!(kinds(&doc), ["page"]);
+    assert_eq!(streams(&reopen(&doc)), original, "exactly the original content");
+    assert!(backdrops_left_off(&doc).is_empty());
+    // The same for an image put behind the text, and after a save that renumbers the objects.
+    crate::add_content(&mut doc, 0, &image(true)).unwrap();
+    assert_eq!(kinds(&doc), ["Added", "copy"]);
+    assert_eq!(unwrapped(&doc)[1], format!("{TWICE_OFF} {TEXT}"));
+    assert_eq!(page_backdrop(&doc, 0).unwrap(), None, "nothing hides the image now");
+    let mut saved = Document::open(Arc::new(write_full(&doc, &SaveOptions::default()).unwrap())).unwrap();
+    crate::delete_content(&mut saved, 0, 0).unwrap();
+    assert_eq!(unwrapped(&reopen(&saved)), original);
+    assert_eq!(page_backdrop(&saved, 0).unwrap(), Some(Backdrop::Fill));
+}
+
+/// Where something now paints before the two fills, neither is turned back on, and the page is
+/// named as one whose backdrop stayed off.
+#[test]
+fn a_backdrop_painted_twice_comes_back_as_far_as_is_safe() {
+    let mut doc = page(&[&format!("{TWICE} {TEXT}")]);
+    add_background(&mut doc, &[0], &red(), false).unwrap();
+    // Something now paints before the first fill: turning it on would cover that.
+    rewrite_copy(&mut doc, &format!("0 0 10 10 re f {TWICE_OFF} {TEXT}"));
+    remove_marks(&mut doc, &[0], MarkKind::Background).unwrap();
+    assert_eq!(streams(&doc), [format!("0 0 10 10 re f {TWICE_OFF} {TEXT}")], "neither fill may paint over the new rectangle");
+    assert_eq!(backdrops_left_off(&doc), [0]);
+}
+
 #[test]
 fn images_behind_the_text_go_over_backgrounds_and_watermarks_in_the_order_added() {
     // No backdrop of its own: the images go behind the whole page.
