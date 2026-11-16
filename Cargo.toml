@@ -154,18 +154,18 @@ vello_cpu = { path = "vendor/vello_cpu" }
 # Only the retained `vendor/winit` and `vendor/egui-wgpu` copies are provenance for the app's
 # earlier patches and their source guards, not path patches; the other `vendor/` entries above
 # remain real path patches. See vendor/README.md and the migration plan.
-ecolor = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-emath = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-epaint = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui-winit = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui_glow = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui_extras = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-eframe = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+ecolor = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+emath = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+epaint = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+epaint_default_fonts = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui-winit = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui-wgpu = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui_glow = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui_extras = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui_kittest = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui_system_font_provider = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+eframe = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui_demo_lib = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
+egui_inspection = { git = "https://github.com/outragedevs/egui.git", rev = "375bf39369fc18a7870e88fd2ab15018b423373a" }
 winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }

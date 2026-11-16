@@ -38,7 +38,7 @@ allow-git = [
     "https://github.com/storytold/craft-libs",
     "https://github.com/storytold/winprint.rs",
     # The reviewed egui 0.37 and winit 0.30.13 fork revisions (immutable pins in Cargo.toml).
-    "https://github.com/storytold/egui",
+    "https://github.com/outragedevs/egui",
     "https://github.com/storytold/winit",
 ]
 
