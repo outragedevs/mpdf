@@ -18,7 +18,11 @@ fn assert_window_stack_graph(root: &std::path::Path, name: &str, version: &str) 
     let package = locked_package(root, name);
     assert!(package.contains(&format!("\nversion = \"{version}\"\n")), "{name} must resolve to {version}: {package}");
     if let Some(source) = package.lines().find_map(|line| line.strip_prefix("source = ")) {
-        assert!(source.contains("github.com/storytold/"), "{name} must come from the reviewed storytold fork once published, not {source}");
+        // mPDF builds egui from its own fork of the storytold fork: the same revision plus the
+        // commits that repaint only what changed on a software renderer (vendor/README.md).
+        // Everything else in the window stack stays on the storytold forks.
+        let reviewed = source.contains("github.com/storytold/") || source.contains("github.com/outragedevs/egui.git");
+        assert!(reviewed, "{name} must come from the reviewed storytold fork, or mPDF's fork of its egui, not {source}");
         assert!(
             source.split(|c: char| !c.is_ascii_hexdigit()).any(|part| part.len() == 40),
             "{name} must pin the fork's 40-character revision, not {source}"
