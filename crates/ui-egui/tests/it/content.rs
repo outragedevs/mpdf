@@ -1804,6 +1804,55 @@ fn an_image_added_behind_the_text_is_the_one_selected() {
     assert_eq!(s.session.get(s.views[0].id).unwrap().can_undo(), Some("Add image"));
 }
 
+/// A picture just added (a stamp, a signature scan) is turned to any angle by the knob above it,
+/// on top of the page or behind its text: it stays the selected picture and keeps its layer.
+#[test]
+fn an_added_image_turns_freely_by_its_knob_on_either_layer() {
+    for behind in [false, true] {
+        let mut h = harness();
+        let mut png = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut png, 30, 20);
+            enc.set_color(png::ColorType::Rgb);
+            enc.write_header().unwrap().write_image_data(&[120; 1800]).unwrap();
+        }
+        h.state_mut().add_image_on_layer("stamp.png".into(), png, behind);
+        h.run_steps(4);
+        let id = h.state().views[0].id;
+        let index = h.state().views[0].image_selection.as_ref().expect("the new picture is selected").index;
+        let before = h.state().session.get(id).unwrap().page_images(0)[index].clone();
+        assert!(before.matrix[1].abs() < 1e-6 && before.matrix[2].abs() < 1e-6, "upright at first: {:?}", before.matrix);
+        // The picture's box on screen: user space has its origin at the page's bottom left.
+        let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+        let k = r.width() / 300.0;
+        let screen = |x: f64, y: f64| egui::pos2(r.left() + x as f32 * k, r.bottom() - y as f32 * k);
+        let centre = screen((before.rect[0] + before.rect[2]) / 2.0, (before.rect[1] + before.rect[3]) / 2.0);
+        let top = screen((before.rect[0] + before.rect[2]) / 2.0, before.rect[3]);
+        let knob = top - egui::vec2(0.0, 22.0);
+        // Swing the knob from straight up to 30 degrees clockwise of it.
+        let arm = centre.y - knob.y;
+        let to = centre + egui::vec2(arm * 0.5, -arm * 0.866);
+        h.hover_at(knob);
+        h.run_steps(1);
+        assert_eq!(h.output().platform_output.cursor_icon, egui::CursorIcon::Grab, "behind {behind}: the knob offers to turn the picture");
+        h.drag_at(knob);
+        h.run_steps(1);
+        for step in 1..=4 {
+            h.hover_at(knob + (to - knob) * (step as f32 / 4.0));
+            h.run_steps(1);
+        }
+        h.drop_at(to);
+        h.run_steps(4);
+        let doc = h.state().session.get(id).unwrap();
+        assert_eq!(doc.can_undo(), Some("Rotate image"), "behind {behind}");
+        let after = &doc.page_images(0)[index];
+        assert_eq!(after.object, before.object, "behind {behind}: the same picture, in the same place in the drawing order");
+        let turned = after.matrix[1].atan2(after.matrix[0]).to_degrees().abs();
+        assert!((turned - 30.0).abs() < 2.0, "behind {behind}: turned by {turned} degrees: {:?}", after.matrix);
+        assert_eq!(h.state().views[0].image_selection.as_ref().map(|s| s.index), Some(index), "behind {behind}: still selected");
+    }
+}
+
 /// Edit image ▸ Behind text and images moves the selected image under the page content, which
 /// moves it in the page's list of added items: the selection follows it.
 #[test]
