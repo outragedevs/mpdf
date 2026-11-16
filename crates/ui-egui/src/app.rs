@@ -103,6 +103,7 @@ impl PdfCraftApp {
             theme_preference: ThemePreference::System,
             reading_colors: Default::default(),
             show_page_edge_shadows: true,
+            effects: Default::default(),
             #[cfg(target_os = "linux")]
             desktop_theme: None,
             #[cfg(target_os = "linux")]
@@ -456,6 +457,22 @@ impl PdfCraftApp {
 
     /// Show `msg` in the toast now, in place of whatever it showed. Script messages still waiting
     /// show after it.
+    /// Whether pages draw their edge shadows and the viewport its edge fades: the preference,
+    /// unless effects are reduced. The preference itself (saved, shown, reported) never changes.
+    pub(crate) fn page_edge_shadows(&self) -> bool {
+        self.show_page_edge_shadows && !self.effects.reduced()
+    }
+
+    /// Animation effects as they apply now. Reduced effects ask for none, the way the system
+    /// setting does, so only the system choice gives way; an explicit On or Off stands.
+    pub(crate) fn effective_animation_effects(&self) -> motion::AnimationEffects {
+        if self.effects.reduced() && self.animation_effects == motion::AnimationEffects::System {
+            motion::AnimationEffects::Off
+        } else {
+            self.animation_effects
+        }
+    }
+
     pub fn notify(&mut self, msg: impl Into<String>) {
         // A left-out count it replaces is said again once the toast is free.
         self.script_messages_dropped = self.script_messages_dropped.saturating_add(std::mem::take(&mut self.toast_dropped));
@@ -526,10 +543,24 @@ impl PdfCraftApp {
 }
 
 impl eframe::App for PdfCraftApp {
+    /// Opaque, like the panels that cover it: the window isn't transparent. eframe's default is
+    /// translucent, and a painter that repaints only what changed can't paint a translucent
+    /// background over the pixels it keeps (they would show through), so it would repaint every
+    /// frame whole (`platform/effects.rs`).
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.panel_fill.to_opaque().to_normalized_gamma_f32()
+    }
+
     /// While files are dragged over the window the system sends no pointer moves, so egui
     /// would keep the place the pointer entered at: tell it where the pointer really is, so the
     /// page grid can show (and use) the gap under it.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // A software rasterizer draws at most so many frames a second (`effects::FrameCap`). The
+        // wait is at most one frame's interval; input meanwhile queues for the next frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(wait) = self.effects.frame_wait(web_time::Instant::now(), raw.screen_rect.map_or(egui::Vec2::ZERO, |r| r.size())) {
+            std::thread::sleep(wait);
+        }
         // The button's release a window move or resize kept from egui.
         window_controls::release_after_desktop_grab(ctx, raw);
         // The wheel after Alt+Tab back, before the mouse has moved (#1518).
@@ -604,6 +635,10 @@ impl PdfCraftApp {
         self.check_restored_recent();
         // Chinese wants its own faces before the Japanese ones (one baseline per line).
         let cjk = theme::CjkPreference::for_language(lang.code());
+        // Before the theme reads it: a change restyles the open window (shadows, the caret).
+        if self.effects.publish(ctx) && self.styled {
+            theme::apply(ctx, self.theme);
+        }
         if !self.styled {
             egui_extras::install_image_loaders(ctx);
             theme::install_fonts_for(ctx, cjk);
@@ -811,7 +846,7 @@ impl PdfCraftApp {
             return;
         }
         // Before any widget reads this frame's wheel input or draws.
-        self.motion.begin_pass(&ctx, self.animation_effects);
+        self.motion.begin_pass(&ctx, self.effective_animation_effects());
         // One-time 0.36 -> 0.37 panel persistence migration, before any panel stores or reads state.
         migrate_panel_state(ui);
         // Another tool lets go of a click whose picture is still being found, whether or not its
