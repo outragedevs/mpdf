@@ -701,6 +701,23 @@ fn a_backdrop_painted_twice_is_replaced_whole_and_comes_back_whole() {
     assert_eq!(page_backdrop(&saved, 0).unwrap(), Some(Backdrop::Fill));
 }
 
+/// Fills in more than one content stream come back last first across the whole page, not only
+/// inside one stream: a later one is accepted only while the ones before it are still off.
+#[test]
+fn backdrops_painted_in_several_streams_all_come_back() {
+    let fill = "q 1 g 0 0 300 200 re f Q";
+    let mut doc = page(&[fill, &format!("{TWICE} {TEXT}")]);
+    let original = streams(&doc);
+    add_background(&mut doc, &[0], &red(), false).unwrap();
+    assert_eq!(kinds(&doc), ["Background", "copy", "copy"]);
+    assert_eq!(streams(&doc)[1..], ["q 1 g 0 0 300 200 re n Q".to_string(), format!("{TWICE_OFF} {TEXT}")], "all three fills are off");
+    assert_eq!(page_backdrop(&doc, 0).unwrap(), None);
+    remove_marks(&mut doc, &[0], MarkKind::Background).unwrap();
+    assert_eq!(kinds(&doc), ["page", "page"]);
+    assert_eq!(streams(&reopen(&doc)), original, "exactly the original content");
+    assert!(backdrops_left_off(&doc).is_empty());
+}
+
 /// Where something now paints before the two fills, neither is turned back on, and the page is
 /// named as one whose backdrop stayed off.
 #[test]

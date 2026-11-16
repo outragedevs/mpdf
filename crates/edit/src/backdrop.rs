@@ -246,63 +246,63 @@ fn replace_one(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<bool, 
 }
 
 /// Turn the fills [`replace`] turned off on `page` back on, where [`restored_copy`] finds that
-/// safe; a copy listed in several slots is restored in each. Returns how many slots it restored.
-/// A copy it can't restore stays as it is, tag and all, so [`backdrops_left_off`] names its page.
-/// Where several fills were replaced one after the other, the last comes back first, then the
-/// one before it, until the page is as it was or one can't be restored.
+/// safe. Returns how many content-list slots it restored. A copy it can't restore stays as it
+/// is, tag and all, so [`backdrops_left_off`] names its page.
+///
+/// One fill at a time, the last one on the page first: [`restored_copy`] accepts a fill only
+/// when it would again be the first thing painted, which holds for a later fill only while the
+/// ones before it are still off.
 pub(crate) fn restore(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<usize, EditError> {
-    let restored = restore_pass(doc, page)?;
+    let mut restored = restore_last(doc, page)?;
     if restored > 0 {
         for _ in 1..MAX_FILLS {
             let Some(now) = current(doc, page) else { break };
-            if restore_pass(doc, &now)? == 0 {
+            let more = restore_last(doc, &now)?;
+            if more == 0 {
                 break;
             }
+            restored = restored.saturating_add(more);
         }
     }
     Ok(restored)
 }
 
-/// One round of [`restore`]: every tagged copy on the page gets the fill its tag names back.
-fn restore_pass(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<usize, EditError> {
+/// One step of [`restore`]: the last copy in the page's content list that can get its fill back
+/// gets it, in every slot that lists it. Returns how many slots that was.
+fn restore_last(doc: &mut Document, page: &pdfcraft_model::Page) -> Result<usize, EditError> {
     let mut list = crate::place::contents(doc, page)?;
-    // Per copy: the stream that takes its place, or `None` when it stays.
-    let mut done: Vec<(ObjRef, Option<ObjRef>)> = Vec::new();
-    let mut restored = 0;
-    for entry in list.iter_mut() {
-        let Object::Ref(copy) = *entry else { continue };
-        let with = match done.iter().find(|(c, _)| *c == copy) {
-            Some(&(_, with)) => with,
-            None => {
-                let with = restored_copy(doc, page, copy).map(|(bytes, dict, was)| {
-                    // The stream it was copied from, while that is still here with these bytes
-                    // (other pages may share it): the page is then exactly as it was. `/Was` is
-                    // only a number, and a full save renumbers objects, so the bytes decide.
-                    let same = |w: &ObjRef| match &*doc.get(*w) {
-                        Object::Stream(s) => {
-                            [TAG, &b"PCMark"[..], b"Subtype"].iter().all(|k| s.dict.get(k).is_none())
-                                && DecodeBudget::new(SCAN_BYTES, 0).decode_strict(doc, s).ok().as_deref() == Some(bytes.as_slice())
-                        }
-                        _ => false,
-                    };
-                    match was.filter(same) {
-                        Some(w) => w,
-                        None => doc.add(Object::Stream(Stream::flate(dict, &bytes))),
-                    }
-                });
-                done.push((copy, with));
-                with
+    let mut tried: Vec<ObjRef> = Vec::new();
+    for slot in (0..list.len()).rev() {
+        let Some(&Object::Ref(copy)) = list.get(slot) else { continue };
+        if tried.contains(&copy) {
+            continue;
+        }
+        tried.push(copy);
+        let Some((bytes, dict, was)) = restored_copy(doc, page, copy) else { continue };
+        // The stream it was copied from, while that is still here with these bytes (other pages
+        // may share it): the page is then exactly as it was. `/Was` is only a number, and a full
+        // save renumbers objects, so the bytes decide.
+        let same = |w: &ObjRef| match &*doc.get(*w) {
+            Object::Stream(s) => {
+                [TAG, &b"PCMark"[..], b"Subtype"].iter().all(|k| s.dict.get(k).is_none())
+                    && DecodeBudget::new(SCAN_BYTES, 0).decode_strict(doc, s).ok().as_deref() == Some(bytes.as_slice())
             }
+            _ => false,
         };
-        if let Some(with) = with {
+        // A stream that is still a copy (an earlier fill of it is off) is never the original.
+        let with = match was.filter(|w| dict.get(TAG).is_none() && same(w)) {
+            Some(w) => w,
+            None => doc.add(Object::Stream(Stream::flate(dict, &bytes))),
+        };
+        let mut restored = 0;
+        for entry in list.iter_mut().filter(|o| matches!(o, Object::Ref(r) if *r == copy)) {
             *entry = Object::Ref(with);
             restored += 1;
         }
-    }
-    if restored > 0 {
         doc.update_dict(page.obj, |d| d.set(b"Contents".to_vec(), Object::Array(list)))?;
+        return Ok(restored);
     }
-    Ok(restored)
+    Ok(0)
 }
 
 /// `copy` (a stream [`replace`] wrote for `page`) with its fill turned back on: the bytes, its
