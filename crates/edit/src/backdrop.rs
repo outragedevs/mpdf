@@ -190,9 +190,14 @@ pub(crate) fn replace(doc: &mut Document, page: &pdfcraft_model::Page) -> Result
     Ok(true)
 }
 
-/// `page` as the document has it now, after a change to its content list.
+/// `page` as the document has it now, after [`replace_one`] or [`restore_pass`] changed its content
+/// list: the same page with its `/Contents` read again. Nothing else of the page changes there,
+/// so what it inherits stays as it was read, without walking the page tree again for every page.
 fn current(doc: &Document, page: &pdfcraft_model::Page) -> Option<pdfcraft_model::Page> {
-    pdfcraft_model::pages(doc).into_iter().find(|p| p.obj == page.obj)
+    let contents = doc.get(page.obj).as_dict()?.get(b"Contents")?.clone();
+    let mut dict = page.dict.clone();
+    dict.set(b"Contents".to_vec(), contents);
+    Some(pdfcraft_model::Page { obj: page.obj, dict })
 }
 
 /// Replace the white fill `page` paints first, if it paints one. Returns whether it did.
