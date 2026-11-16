@@ -20,8 +20,8 @@ Review upstream changes before replacing the snapshot and run the lifecycle and 
 
 The checked-in, resolved Cargo graph pins `winit` to storytold/winit
 `a517b3846ee8457d84ee4975110bfda6797c44dc` and the egui crates to outragedevs/egui
-`375bf39369fc18a7870e88fd2ab15018b423373a`, which is storytold/egui
-`725a39fca940f77149ffbb9c58eef405a16997bc` plus four commits that repaint only what
+`d8594af1bda87cd0e81a1f5400134a972c6b5cc2`, which is storytold/egui
+`725a39fca940f77149ffbb9c58eef405a16997bc` plus the commits that repaint only what
 changed on a software renderer (branch `mpdf/partial-repaint`). Neither `vendor/winit` nor
 `vendor/egui-wgpu` is a root `[patch.crates-io]` path entry. The retained copies
 record the app's earlier patches; their source-reading tests establish provenance,
