@@ -15640,3 +15640,15 @@ fn inline_conversions_refuse_office_documents_without_running_libreoffice() {
     assert_eq!(s.convert_to_pdf_inline("notes.txt", &Arc::new(b"hello".to_vec())).unwrap().0, SourceKind::Text);
     assert!(s.as_pdf_inline("scan.jpg", &Arc::new(jpeg_bytes())).unwrap().starts_with(b"%PDF-"));
 }
+
+#[test]
+fn the_apps_limit_decides_how_many_threads_draw_pages() {
+    use crate::doc_state::render_threads_for;
+    // No limit: by the machine's processors, one left for the interface.
+    for (cores, threads) in [(1, 1), (2, 1), (4, 3), (8, 7), (64, 7)] {
+        assert_eq!(render_threads_for(cores, 0), threads, "{cores} processors");
+    }
+    // A limit decides alone, whatever the machine has.
+    assert_eq!(render_threads_for(64, 2), 2);
+    assert_eq!(render_threads_for(1, 3), 3);
+}

@@ -81,13 +81,13 @@ fn the_frame_cap_waits_out_the_rest_of_the_interval() {
     let mut cap = FrameCap::per_second(30).unwrap();
     assert_eq!(cap.fps(), 30);
     let t0 = Instant::now();
-    assert_eq!(cap.wait(t0, size), None, "the first frame never waits");
+    assert_eq!(cap.wait(t0, size, false), None, "the first frame never waits");
     cap.frame_started(t0, size);
-    let wait = cap.wait(t0 + Duration::from_millis(10), size).unwrap();
+    let wait = cap.wait(t0 + Duration::from_millis(10), size, false).unwrap();
     assert!((wait.as_secs_f64() - (1.0 / 30.0 - 0.010)).abs() < 0.001, "{wait:?}");
-    assert_eq!(cap.wait(t0 + Duration::from_millis(34), size), None, "the interval has passed");
-    assert_eq!(cap.wait(t0 + Duration::from_millis(10), egui::vec2(1000.0, 920.0)), None, "a resize is drawn at once");
-    assert_eq!(cap.wait(t0, size), Some(Duration::from_secs(1) / 30), "right after a frame: the whole interval");
+    assert_eq!(cap.wait(t0 + Duration::from_millis(34), size, false), None, "the interval has passed");
+    assert_eq!(cap.wait(t0 + Duration::from_millis(10), egui::vec2(1000.0, 920.0), false), None, "a resize is drawn at once");
+    assert_eq!(cap.wait(t0, size, false), Some(Duration::from_secs(1) / 30), "right after a frame: the whole interval");
 
     assert!(FrameCap::per_second(0).is_none(), "0 is no cap");
     assert_eq!(FrameCap::per_second(100_000).unwrap().fps(), MAX_FPS_LIMIT);
@@ -99,22 +99,22 @@ fn only_reduced_effects_wait_for_the_cap() {
     let t0 = Instant::now();
     let soon = t0 + Duration::from_millis(5);
     let mut e = effects(ReducedEffects::Auto, Some(true));
-    assert_eq!(e.frame_wait(t0, size), None, "no cap installed: tests and the web never wait");
+    assert_eq!(e.frame_wait(t0, size, false), None, "no cap installed: tests and the web never wait");
     e.frame_cap = FrameCap::per_second(DEFAULT_MAX_FPS);
     assert_eq!(e.max_fps(), Some(30));
-    assert_eq!(e.frame_wait(t0, size), None);
-    let wait = e.frame_wait(soon, size).unwrap();
+    assert_eq!(e.frame_wait(t0, size, false), None);
+    let wait = e.frame_wait(soon, size, false).unwrap();
     assert!(wait > Duration::from_millis(25) && wait < Duration::from_millis(30), "{wait:?}");
     // The next frame counts from the end of that wait.
     let after = soon + wait + Duration::from_millis(1);
-    assert!(e.frame_wait(after, size).is_some());
+    assert!(e.frame_wait(after, size, false).is_some());
 
     // The same rhythm with reduced effects off: a frame 5 ms after the last is drawn at once.
     let mut off = effects(ReducedEffects::Off, Some(true));
     off.frame_cap = FrameCap::per_second(DEFAULT_MAX_FPS);
     assert_eq!(off.max_fps(), None);
-    assert_eq!(off.frame_wait(t0, size), None);
-    assert_eq!(off.frame_wait(soon, size), None, "a GPU, or reduced effects off, never waits");
+    assert_eq!(off.frame_wait(t0, size, false), None);
+    assert_eq!(off.frame_wait(soon, size, false), None, "a GPU, or reduced effects off, never waits");
 }
 
 #[test]
@@ -134,5 +134,59 @@ fn the_window_background_is_opaque_so_partial_repaint_can_keep_pixels() {
     for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
         let [.., alpha] = app.clear_color(&visuals);
         assert_eq!(alpha, 1.0, "egui-wgpu repaints everything under a translucent clear colour");
+    }
+}
+
+#[test]
+fn scrolling_frames_come_less_often() {
+    let size = egui::vec2(1440.0, 920.0);
+    let t0 = Instant::now();
+    let mut cap = FrameCap::per_second(30).unwrap().with_scroll_fps(15);
+    assert_eq!(cap.scroll_fps(), 15);
+    cap.frame_started(t0, size);
+    let later = t0 + Duration::from_millis(40);
+    assert_eq!(cap.wait(later, size, false), None, "other frames keep the cap's own rate");
+    let wait = cap.wait(later, size, true).unwrap();
+    assert!(wait > Duration::from_millis(26) && wait < Duration::from_millis(27), "{wait:?}");
+    assert_eq!(cap.wait(t0 + Duration::from_millis(67), size, true), None);
+    assert_eq!(cap.wait(later, egui::vec2(1000.0, 920.0), true), None, "a resize is drawn at once");
+
+    // No separate rate, or one no lower than the cap's: scrolling keeps the cap's rate.
+    for fps in [0, 30, 60] {
+        let mut same = FrameCap::per_second(30).unwrap().with_scroll_fps(fps);
+        assert_eq!(same.scroll_fps(), 30, "{fps}");
+        same.frame_started(t0, size);
+        assert_eq!(same.wait(later, size, true), None, "{fps}");
+    }
+
+    assert_eq!(scroll_fps_from_env(Some("12")), Some(12));
+    assert_eq!(scroll_fps_from_env(Some("0")), Some(0));
+    assert_eq!(scroll_fps_from_env(Some("fast")), None);
+    assert_eq!(scroll_fps_from_env(None), None);
+}
+
+#[test]
+fn the_page_view_reports_a_scroll_once() {
+    let ctx = egui::Context::default();
+    assert!(!take_scrolled(&ctx));
+    note_scroll(&ctx);
+    assert!(take_scrolled(&ctx));
+    assert!(!take_scrolled(&ctx), "asked once a frame");
+}
+
+#[test]
+fn a_software_rasterizer_leaves_processors_to_drawing_the_window() {
+    for (cores, threads) in [(1, 1), (2, 1), (4, 2), (6, 3), (8, 3), (64, 3)] {
+        assert_eq!(software_render_threads(cores), threads, "{cores} processors");
+    }
+    let reduced = effects(ReducedEffects::Auto, Some(true));
+    assert_eq!(reduced.render_thread_limit(8), Some(3));
+    assert_eq!(effects(ReducedEffects::Auto, Some(false)).render_thread_limit(8), None, "a GPU keeps the engine's choice");
+    let asked = Effects { render_threads: Some(5), ..effects(ReducedEffects::Auto, Some(true)) };
+    assert_eq!(asked.render_thread_limit(8), Some(5), "the environment decides alone");
+
+    assert_eq!(render_threads_from_env(Some(" 4 ")), Some(4));
+    for other in [Some("0"), Some("17"), Some("many"), Some(""), None] {
+        assert_eq!(render_threads_from_env(other), None, "{other:?}");
     }
 }

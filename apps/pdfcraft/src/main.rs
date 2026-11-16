@@ -39,6 +39,7 @@ use pdfcraft_ui_egui::effects;
 mod apple_events;
 mod compositor_gpu;
 mod decorations;
+mod diagnostics;
 mod logging;
 #[cfg(target_os = "windows")]
 mod motion;
@@ -173,8 +174,10 @@ fn rejoin_split_paths(args: Vec<String>, exists: impl Fn(&str) -> bool) -> Vec<S
 }
 
 fn main() -> eframe::Result {
+    // For the diagnostics log's time to the first pass.
+    let process_started = std::time::Instant::now();
     // First, so the panic hook and every start-up warning are recorded (`logging`).
-    let logger = logging::install();
+    let logger = logging::install(diagnostics::enabled(std::env::var("PDFCRAFT_DIAGNOSTICS").ok().as_deref(), diagnostics::by_default()));
     // This build's name and starting language, before anything is shown.
     pdfcraft_ui_egui::i18n::set_brand(pdfcraft_ui_egui::i18n::Brand { name: "mPDF", language: Some("de") });
     // Last-resort guard (AGENTS.md §4): commands, edits, opens and saves catch panics and report
@@ -210,10 +213,10 @@ fn main() -> eframe::Result {
     // The log file stays in the data folder; opened after the arguments (so `--version` leaves
     // no file behind).
     // Records logged until now are written to it first.
-    if let (Some(logger), Some(dir)) =
-        (logger, pdfcraft_ui_egui::portable::data_dir().map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir("mPDF")))
-    {
-        match logger.attach_dir(&dir.join("logs")) {
+    let logs =
+        pdfcraft_ui_egui::portable::data_dir().map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir("mPDF")).map(|d| d.join("logs"));
+    if let (Some(logger), Some(dir)) = (logger, &logs) {
+        match logger.attach_dir(dir) {
             Ok(path) => {
                 log::info!("{} {}, log file {}", pdfcraft_ui_egui::i18n::product_name(), pdfcraft_engine::build_info::version(), path.display())
             }
@@ -233,13 +236,34 @@ fn main() -> eframe::Result {
         single_instance::Claim::Primary(server) => Some(server),
         single_instance::Claim::Alone => None,
     };
+    // After the hand-off, so only the launch that shows the window writes the diagnostics log.
+    let diagnostics = logger.is_some_and(|logger| logger.diagnostics());
+    if let (true, Some(logger)) = (diagnostics, logger) {
+        start_diagnostics(logger, logs.as_deref());
+    }
     let choice = renderer_choice(std::env::var("PDFCRAFT_RENDERER").ok().as_deref());
     let reduced_effects = reduced_effects_choice(std::env::var("PDFCRAFT_REDUCED_EFFECTS").ok().as_deref());
     // Fixed before the adapter is known, so it follows the adapter the last start drew on.
     let dithering = reduced_effects.dithering_at_start(saved_settings().is_some_and(|s| effects::saved(&s)));
     let max_fps = max_fps_choice(std::env::var("PDFCRAFT_MAX_FPS").ok().as_deref());
-    let launch =
-        Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged, reduced_effects, dithering, max_fps };
+    let scroll_fps = scroll_fps_choice(std::env::var("PDFCRAFT_SCROLL_FPS").ok().as_deref());
+    let render_threads = render_threads_choice(std::env::var("PDFCRAFT_RENDER_THREADS").ok().as_deref());
+    let launch = Launch {
+        files,
+        options,
+        control_file,
+        create_images,
+        combine,
+        integrated,
+        window_controls,
+        two_paged,
+        reduced_effects,
+        dithering,
+        max_fps,
+        scroll_fps,
+        render_threads,
+        diagnostics: diagnostics.then_some(process_started),
+    };
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
     // that launched us as well as later ones. Lives until the event loop returns.
     #[cfg(target_os = "macos")]
@@ -345,6 +369,51 @@ fn max_fps_choice(value: Option<&str>) -> u32 {
     }
 }
 
+/// `PDFCRAFT_SCROLL_FPS`: frames a second while the pages scroll and effects are reduced (`0`:
+/// the same as other frames); otherwise [`effects::DEFAULT_SCROLL_FPS`]. Anything else is
+/// reported and gets the default.
+fn scroll_fps_choice(value: Option<&str>) -> u32 {
+    match (effects::scroll_fps_from_env(value), value) {
+        (Some(fps), _) => fps,
+        (None, Some(v)) if !v.trim().is_empty() => {
+            log::warn!("PDFCRAFT_SCROLL_FPS={v:?} is not 0 to {}; using {}", effects::MAX_FPS_LIMIT, effects::DEFAULT_SCROLL_FPS);
+            effects::DEFAULT_SCROLL_FPS
+        }
+        _ => effects::DEFAULT_SCROLL_FPS,
+    }
+}
+
+/// `PDFCRAFT_RENDER_THREADS`: how many threads draw page pictures; unset leaves it to the
+/// machine and the adapter. Anything else is reported and left to them too.
+fn render_threads_choice(value: Option<&str>) -> Option<usize> {
+    let threads = effects::render_threads_from_env(value);
+    if let (None, Some(v)) = (threads, value)
+        && !v.trim().is_empty()
+    {
+        log::warn!("PDFCRAFT_RENDER_THREADS={v:?} is not 1 to {}; the machine decides", effects::MAX_RENDER_THREADS);
+    }
+    threads
+}
+
+/// Open the diagnostics log (the Desktop, else beside the ordinary log) and write the start of
+/// this run to it. Without a place for it the records stay in memory, bounded, and are lost.
+fn start_diagnostics(logger: &logging::AppLogger, logs: Option<&std::path::Path>) {
+    let desktop = diagnostics::desktop();
+    let opened = diagnostics::candidates(desktop.as_deref(), logs).into_iter().find_map(|path| match logger.attach_diagnostics(&path) {
+        Ok(()) => Some(path),
+        Err(e) => {
+            log::warn!("no diagnostics log: {e}");
+            None
+        }
+    });
+    if let Some(path) = opened {
+        log::info!("diagnostics log {}", path.display());
+    }
+    for line in diagnostics::header(&pdfcraft_engine::build_info::version(), effects::processors(), |name| std::env::var(name).ok()) {
+        log::info!(target: pdfcraft_ui_egui::perf::TARGET, "{line}");
+    }
+}
+
 /// The app's saved settings, read before eframe opens them (which is after the renderer
 /// started). `None` when there are none or they can't be read; eframe logs that itself.
 fn saved_settings() -> Option<serde_json::Value> {
@@ -439,6 +508,12 @@ struct Launch {
     two_paged: bool,
     /// `PDFCRAFT_REDUCED_EFFECTS`.
     reduced_effects: effects::ReducedEffects,
+    /// Frames a second while the pages scroll and effects are reduced; 0 for no separate rate.
+    scroll_fps: u32,
+    /// `PDFCRAFT_RENDER_THREADS`.
+    render_threads: Option<usize>,
+    /// When the process started, while the diagnostics log is kept.
+    diagnostics: Option<std::time::Instant>,
     /// Whether egui dithers ([`effects::ReducedEffects::dithering_at_start`]).
     dithering: bool,
     /// `PDFCRAFT_MAX_FPS`: the frame cap while effects are reduced.
@@ -505,8 +580,22 @@ fn app_creator<'a>(
     instance: Option<&'a single_instance::Server>,
     #[cfg(target_os = "macos")] apple_events: &'a apple_events::AppleEvents,
 ) -> eframe::AppCreator<'a> {
-    let Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged, reduced_effects, dithering, max_fps } =
-        launch;
+    let Launch {
+        files,
+        options,
+        control_file,
+        create_images,
+        combine,
+        integrated,
+        window_controls,
+        two_paged,
+        reduced_effects,
+        dithering,
+        max_fps,
+        scroll_fps,
+        render_threads,
+        diagnostics,
+    } = launch;
     Box::new(move |cc| {
         started.set(true);
         let mut app = PdfCraftApp::new();
@@ -514,7 +603,11 @@ fn app_creator<'a>(
         app.units = pdfcraft_ui_egui::units::Unit::system();
         // `--reduced_effects` (an option, applied below) overrides the environment.
         app.effects.mode = reduced_effects;
-        app.effects.frame_cap = effects::FrameCap::per_second(max_fps);
+        app.effects.frame_cap = effects::FrameCap::per_second(max_fps).map(|cap| cap.with_scroll_fps(scroll_fps));
+        app.effects.render_threads = render_threads;
+        if let Some(process_started) = diagnostics {
+            app.perf.enable(Some(process_started));
+        }
         #[cfg(target_os = "linux")]
         app.enable_desktop_theme();
         // The system's reopen-windows choice (macOS) starts the preference; a saved choice replaces it.
@@ -564,16 +657,17 @@ fn app_creator<'a>(
         if let Some(state) = &cc.wgpu_render_state {
             let adapter = state.adapter.get_info();
             let max_texture_dimension_2d = state.device.limits().max_texture_dimension_2d;
-            log::info!(
-                "renderer: wgpu; adapter: {} ({:?}, {:?}); max_texture_dimension_2d: {max_texture_dimension_2d}",
-                adapter.name,
-                adapter.device_type,
-                adapter.backend
+            let renderer = format!(
+                "renderer: wgpu; adapter: {} ({:?}, {:?}); driver: {} {}; surface: {:?}; max_texture_dimension_2d: {max_texture_dimension_2d}",
+                adapter.name, adapter.device_type, adapter.backend, adapter.driver, adapter.driver_info, state.target_format
             );
+            log::info!("{renderer}");
+            log::info!(target: pdfcraft_ui_egui::perf::TARGET, "{renderer}");
             adapter_found(&mut app, adapter.device_type);
             log_effects(&app, dithering);
         } else {
             log::info!("renderer: OpenGL (glow)");
+            log::info!(target: pdfcraft_ui_egui::perf::TARGET, "renderer: OpenGL (glow)");
             log_effects(&app, dithering);
         }
         // A portable marker whose data folder can't be written (#157): say where settings went.
@@ -622,11 +716,23 @@ fn log_effects(app: &PdfCraftApp, dithering: bool) {
         effects::ReducedEffects::Auto if app.effects.reduced() => "software renderer",
         effects::ReducedEffects::Auto => "graphics processor",
     };
-    let cap = app.effects.max_fps().map_or_else(|| "no frame cap".to_string(), |fps| format!("max {fps} fps"));
+    let cap = match (app.effects.max_fps(), app.effects.scroll_fps()) {
+        (Some(fps), Some(scroll)) if scroll < fps => format!("max {fps} fps, {scroll} while scrolling"),
+        (Some(fps), _) => format!("max {fps} fps"),
+        _ => "no frame cap".to_string(),
+    };
+    // The limit as documents opened from now on get it; the app sets it again every pass.
+    pdfcraft_engine::set_render_thread_limit(app.effects.render_thread_limit(effects::processors()));
+    let threads = pdfcraft_engine::render_thread_count();
     let state = if app.effects.reduced() { "on" } else { "off" };
     // egui decides whether partial repaint applies, and warns when it can't.
     let partial = if app.effects.reduced() && app.effects.software_renderer().is_some() { "requested" } else { "off" };
-    log::info!("reduced effects: {state} ({why}), {cap}, dithering {}, partial repaint {partial}", if dithering { "on" } else { "off" });
+    let effects = format!(
+        "reduced effects: {state} ({why}), {cap}, dithering {}, partial repaint {partial}, {threads} page render threads",
+        if dithering { "on" } else { "off" }
+    );
+    log::info!("{effects}");
+    log::info!(target: pdfcraft_ui_egui::perf::TARGET, "{effects}");
 }
 
 /// Tell the user when wgpu draws on the processor (WARP on Windows, llvmpipe on Linux) rather than

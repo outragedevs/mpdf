@@ -148,6 +148,7 @@ use platform::macos_association;
 pub use platform::motion;
 #[cfg(not(target_arch = "wasm32"))]
 use platform::open_worker;
+pub use platform::perf;
 #[cfg(not(target_arch = "wasm32"))]
 use platform::pickers;
 pub use platform::portable;
@@ -371,6 +372,9 @@ pub struct PdfCraftApp {
     /// Reduced effects while a software rasterizer draws (`platform/effects.rs`): session only,
     /// apart from which adapter the last start drew on.
     pub effects: effects::Effects,
+    /// What the passes cost, for the diagnostics log (`platform/perf.rs`); off unless the
+    /// desktop app turns it on.
+    pub perf: perf::Perf,
     /// The Linux portal is enabled only by the native host, and starts on the first System choice.
     #[cfg(target_os = "linux")]
     desktop_theme: Option<pdfcraft_platform::desktop_theme::DesktopTheme>,

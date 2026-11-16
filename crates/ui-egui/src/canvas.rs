@@ -2798,6 +2798,10 @@ fn track_scroll<T>(ui: &egui::Ui, view: &mut DocView, out: &egui::containers::sc
         view.end_find_following();
     }
     let now_settle = ui.input(|i| i.time);
+    if (scroll_offset - view.last_scroll).length() > 0.01 {
+        // A software rasterizer draws scrolling frames less often (`effects::FrameCap`).
+        crate::platform::effects::note_scroll(ui.ctx());
+    }
     if (scroll_offset - view.last_scroll).length() > 2.0 {
         view.pan_hold_until = now_settle + 0.25;
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(280));

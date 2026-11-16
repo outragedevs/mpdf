@@ -12,6 +12,14 @@
 //! `warn,pdfcraft_render=trace`, `wgpu_core=info`. A directive ending in `*` matches every target
 //! that starts with it (`pdfcraft*=debug`).
 //!
+//! A second file, the diagnostics log ([`AppLogger::attach_diagnostics`]), is for a performance
+//! report from a machine we can't measure on. It gets what says how the run went and nothing
+//! that names a document: the `diagnostics` records (the start, the passes, the page pictures;
+//! `pdfcraft_ui_egui::perf`), the painter's (`egui_wgpu`), both from debug up whatever
+//! `RUST_LOG` says, and the graphics stack's warnings. PdfCraft's other records stay out of
+//! it, because they may name a file. It is appended to across starts and starts over once it
+//! is half full.
+//!
 //! Records logged before the settings directory is known are kept (up to [`MAX_PENDING`]) and
 //! written once the file is attached. Writing never panics: a file that can't be created or
 //! written leaves standard error as the only sink. Never log the control-channel token or a
@@ -31,6 +39,34 @@ pub const LOG_FILE: &str = "mpdf.log";
 pub const KEEP: usize = 2;
 /// The log file stops growing past this size (a runaway warning can't fill the disk).
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+/// The diagnostics log stops growing past this size.
+pub const MAX_DIAGNOSTICS_BYTES: u64 = 8 * 1024 * 1024;
+/// Targets whose records go to the diagnostics log from debug up.
+const DIAGNOSTIC_TARGETS: [&str; 2] = ["diagnostics", "egui_wgpu"];
+/// The graphics stack, whose warnings go to the diagnostics log. None of it knows a document.
+const GRAPHICS_TARGETS: [&str; 5] = ["wgpu*", "egui*", "eframe", "winit", "naga"];
+
+/// The level from which the diagnostics log takes records of `target`.
+pub fn diagnostics_level(target: &str) -> LevelFilter {
+    if DIAGNOSTIC_TARGETS.iter().any(|name| matches(name, target)) {
+        LevelFilter::Debug
+    } else if GRAPHICS_TARGETS.iter().any(|name| matches(name, target)) {
+        LevelFilter::Warn
+    } else {
+        LevelFilter::Off
+    }
+}
+
+/// Open the diagnostics log at `path` to append to, or empty once it is half full, so a start
+/// always has room. Returns the file and how much it already holds.
+pub fn open_diagnostics(path: &Path) -> std::io::Result<(File, u64)> {
+    let held = std::fs::metadata(path).map_or(0, |m| m.len());
+    if held > MAX_DIAGNOSTICS_BYTES / 2 {
+        return Ok((File::create(path)?, 0));
+    }
+    Ok((std::fs::OpenOptions::new().append(true).create(true).open(path)?, held))
+}
+
 /// Records kept in memory until the log file is attached.
 pub const MAX_PENDING: usize = 512;
 /// The built-in filter when `RUST_LOG` is unset or empty.
@@ -167,6 +203,12 @@ impl Sink {
 
     /// Start writing to `file`, first the lines kept so far.
     pub fn attach(&mut self, file: File) {
+        self.attach_holding(file, 0);
+    }
+
+    /// [`Sink::attach`] to a file that already holds `held` bytes, which count towards the cap.
+    pub fn attach_holding(&mut self, file: File, held: u64) {
+        self.written = held;
         self.file = Some(file);
         for line in std::mem::take(&mut self.pending) {
             self.append(&line);
@@ -199,16 +241,47 @@ impl Sink {
     }
 }
 
-/// The installed logger: a [`Filter`], standard error and a [`Sink`].
+/// The installed logger: a [`Filter`], standard error, a [`Sink`], and with diagnostics a
+/// second one.
 pub struct AppLogger {
     filter: Filter,
     stderr: bool,
     sink: Mutex<Sink>,
+    diagnostics: Option<Mutex<Sink>>,
 }
 
 impl AppLogger {
     pub fn new(filter: Filter, stderr: bool) -> AppLogger {
-        AppLogger { filter, stderr, sink: Mutex::new(Sink::new(MAX_FILE_BYTES)) }
+        AppLogger { filter, stderr, sink: Mutex::new(Sink::new(MAX_FILE_BYTES)), diagnostics: None }
+    }
+
+    /// Also keep a diagnostics log; its file comes with [`AppLogger::attach_diagnostics`].
+    #[must_use]
+    pub fn with_diagnostics(mut self) -> AppLogger {
+        self.diagnostics = Some(Mutex::new(Sink::new(MAX_DIAGNOSTICS_BYTES)));
+        self
+    }
+
+    /// Whether a diagnostics log is kept.
+    pub fn diagnostics(&self) -> bool {
+        self.diagnostics.is_some()
+    }
+
+    /// Send the diagnostics records to the file at `path`, after what it already holds.
+    pub fn attach_diagnostics(&self, path: &Path) -> Result<(), String> {
+        let Some(sink) = &self.diagnostics else { return Err("diagnostics are off".to_owned()) };
+        let (file, held) = open_diagnostics(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        sink.lock().unwrap_or_else(PoisonError::into_inner).attach_holding(file, held);
+        Ok(())
+    }
+
+    /// The most verbose level any record can reach, for `log::set_max_level`.
+    pub fn max_level(&self) -> LevelFilter {
+        if self.diagnostics.is_some() { self.filter.max().max(LevelFilter::Debug) } else { self.filter.max() }
+    }
+
+    fn for_diagnostics(&self, metadata: &log::Metadata<'_>) -> bool {
+        self.diagnostics.is_some() && metadata.level() <= diagnostics_level(metadata.target())
     }
 
     /// Rotate the logs in `dir` and send records to the fresh file; returns its path.
@@ -221,35 +294,45 @@ impl AppLogger {
 
 impl log::Log for AppLogger {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= self.filter.level_for(metadata.target())
+        metadata.level() <= self.filter.level_for(metadata.target()) || self.for_diagnostics(metadata)
     }
 
     fn log(&self, record: &log::Record<'_>) {
-        if !self.enabled(record.metadata()) {
+        let ordinary = record.level() <= self.filter.level_for(record.target());
+        let diagnostic = self.for_diagnostics(record.metadata());
+        if !ordinary && !diagnostic {
             return;
         }
         let thread = std::thread::current();
         let line =
             format_line(&timestamp(SystemTime::now()), record.level(), thread.name().unwrap_or("?"), record.target(), &record.args().to_string());
-        if self.stderr {
-            let _ = std::io::stderr().write_all(line.as_bytes());
+        if ordinary {
+            if self.stderr {
+                let _ = std::io::stderr().write_all(line.as_bytes());
+            }
+            self.sink.lock().unwrap_or_else(PoisonError::into_inner).write(&line);
         }
-        self.sink.lock().unwrap_or_else(PoisonError::into_inner).write(&line);
+        if let (true, Some(sink)) = (diagnostic, &self.diagnostics) {
+            sink.lock().unwrap_or_else(PoisonError::into_inner).write(&line);
+        }
     }
 
     fn flush(&self) {}
 }
 
-/// Install the logger (filter from `RUST_LOG`, else [`DEFAULT_FILTER`]); `None` when another
-/// logger was installed first. Call [`AppLogger::attach_dir`] once the settings directory is known.
-pub fn install() -> Option<&'static AppLogger> {
+/// Install the logger (filter from `RUST_LOG`, else [`DEFAULT_FILTER`]), with a diagnostics log
+/// when `diagnostics`; `None` when another logger was installed first. Call
+/// [`AppLogger::attach_dir`] once the settings directory is known.
+pub fn install(diagnostics: bool) -> Option<&'static AppLogger> {
     static LOGGER: OnceLock<AppLogger> = OnceLock::new();
     let spec = std::env::var("RUST_LOG").ok().filter(|s| !s.trim().is_empty());
     let filter = Filter::parse(spec.as_deref().unwrap_or(DEFAULT_FILTER));
-    let max = filter.max();
-    let logger = LOGGER.get_or_init(|| AppLogger::new(filter, true));
+    let logger = LOGGER.get_or_init(|| {
+        let logger = AppLogger::new(filter, true);
+        if diagnostics { logger.with_diagnostics() } else { logger }
+    });
     log::set_logger(logger).ok()?;
-    log::set_max_level(max);
+    log::set_max_level(logger.max_level());
     Some(logger)
 }
 
@@ -449,6 +532,74 @@ mod tests {
         assert!(!text.contains("too chatty") && !text.contains("below info"), "{text}");
         assert!(logger.enabled(&log::Metadata::builder().level(log::Level::Info).target("pdfcraft_ui_egui").build()));
         assert!(!logger.enabled(&log::Metadata::builder().level(log::Level::Info).target("naga").build()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_diagnostics_log_gets_the_measurements_and_nothing_that_names_a_document() {
+        use log::Log;
+        let dir = temp_dir("diagnostics");
+        let logger = AppLogger::new(Filter::parse(DEFAULT_FILTER), false).with_diagnostics();
+        assert_eq!(logger.max_level(), LevelFilter::Debug);
+        let record = |level, target: &'static str, msg: &'static str| {
+            logger.log(&log::Record::builder().level(level).target(target).args(format_args!("{msg}")).build());
+        };
+        // Before either file exists: kept for both.
+        record(log::Level::Info, "diagnostics", "8 processors");
+        let path = logger.attach_dir(&dir).expect("attach");
+        let desktop = dir.join("desktop.log");
+        std::fs::write(&desktop, "an earlier start\n").expect("write");
+        logger.attach_diagnostics(&desktop).expect("diagnostics");
+        record(log::Level::Debug, "diagnostics", "last 5.0 s: 12 passes");
+        record(log::Level::Debug, "egui_wgpu::partial_repaint", "3 full");
+        record(log::Level::Warn, "wgpu_hal::dx12", "a surface warning");
+        record(log::Level::Info, "wgpu_core::device", "too chatty");
+        record(log::Level::Info, "pdfcraft_ui_egui::files", "opened client.pdf");
+        record(log::Level::Error, "mpdf", "could not open client.pdf");
+        record(log::Level::Trace, "diagnostics", "below debug");
+        let text = read(&desktop);
+        assert!(text.starts_with("an earlier start\n"), "{text}");
+        for kept in
+            ["diagnostics: 8 processors\n", "diagnostics: last 5.0 s: 12 passes\n", "egui_wgpu::partial_repaint: 3 full\n", "a surface warning\n"]
+        {
+            assert!(text.contains(kept), "{kept:?} in {text}");
+        }
+        assert!(!text.contains("client.pdf") && !text.contains("too chatty") && !text.contains("below debug"), "{text}");
+        // The ordinary log keeps to its filter: the debug measurements are not in it.
+        let ordinary = read(&path);
+        assert!(ordinary.contains("opened client.pdf") && ordinary.contains("a surface warning"), "{ordinary}");
+        assert!(!ordinary.contains("12 passes") && !ordinary.contains("3 full"), "{ordinary}");
+        assert!(logger.enabled(&log::Metadata::builder().level(log::Level::Debug).target("diagnostics").build()));
+        // Without diagnostics the same records stay out altogether.
+        let plain = AppLogger::new(Filter::parse(DEFAULT_FILTER), false);
+        assert!(!plain.enabled(&log::Metadata::builder().level(log::Level::Debug).target("diagnostics").build()));
+        assert_eq!(plain.max_level(), LevelFilter::Info);
+        assert!(plain.attach_diagnostics(&desktop).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_diagnostics_log_starts_over_once_it_is_half_full() {
+        let dir = temp_dir("diagnostics-full");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("mpdf.log");
+        let (_, held) = open_diagnostics(&path).expect("new");
+        assert_eq!(held, 0);
+        std::fs::write(&path, "x".repeat(1000)).expect("write");
+        assert_eq!(open_diagnostics(&path).expect("append").1, 1000);
+        let big = usize::try_from(MAX_DIAGNOSTICS_BYTES / 2 + 1).expect("fits");
+        std::fs::write(&path, vec![b'x'; big]).expect("write");
+        assert_eq!(open_diagnostics(&path).expect("start over").1, 0);
+        assert_eq!(read(&path), "");
+        // What a file already holds counts towards the cap.
+        let mut sink = Sink::new(100);
+        std::fs::write(&path, "x".repeat(90)).expect("write");
+        let (file, held) = open_diagnostics(&path).expect("append");
+        sink.attach_holding(file, held);
+        sink.write("a line of more than ten bytes\n");
+        assert_eq!(read(&path).matches("log file reached").count(), 1);
+        // A folder where the file should be is an error, not a panic.
+        assert!(open_diagnostics(&dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

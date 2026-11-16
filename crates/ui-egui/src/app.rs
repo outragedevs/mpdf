@@ -104,6 +104,7 @@ impl PdfCraftApp {
             reading_colors: Default::default(),
             show_page_edge_shadows: true,
             effects: Default::default(),
+            perf: Default::default(),
             #[cfg(target_os = "linux")]
             desktop_theme: None,
             #[cfg(target_os = "linux")]
@@ -557,10 +558,14 @@ impl eframe::App for PdfCraftApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         // A software rasterizer draws at most so many frames a second (`effects::FrameCap`). The
         // wait is at most one frame's interval; input meanwhile queues for the next frame.
+        // Scrolling frames change most of the window, so they come less often still.
+        let scrolled = effects::take_scrolled(ctx);
+        let wait = self.effects.frame_wait(web_time::Instant::now(), raw.screen_rect.map_or(egui::Vec2::ZERO, |r| r.size()), scrolled);
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(wait) = self.effects.frame_wait(web_time::Instant::now(), raw.screen_rect.map_or(egui::Vec2::ZERO, |r| r.size())) {
+        if let Some(wait) = wait {
             std::thread::sleep(wait);
         }
+        self.perf.begin_pass(web_time::Instant::now(), wait, scrolled, &raw.events);
         // The button's release a window move or resize kept from egui.
         window_controls::release_after_desktop_grab(ctx, raw);
         // The wheel after Alt+Tab back, before the mouse has moved (#1518).
@@ -604,6 +609,12 @@ impl eframe::App for PdfCraftApp {
         self.begin_ui();
         self.guarded_frame(|app| app.ui_unguarded(ui));
         self.end_ui();
+        if self.perf.enabled() {
+            let window = (ui.ctx().content_rect().size(), ui.ctx().pixels_per_point());
+            for record in self.perf.end_pass(web_time::Instant::now(), window) {
+                log::debug!(target: perf::TARGET, "{record}");
+            }
+        }
     }
 }
 
@@ -635,6 +646,9 @@ impl PdfCraftApp {
         self.check_restored_recent();
         // Chinese wants its own faces before the Japanese ones (one baseline per line).
         let cjk = theme::CjkPreference::for_language(lang.code());
+        // Documents opened from now on draw their pages on fewer threads while a software
+        // rasterizer needs the processors to draw the window.
+        pdfcraft_engine::set_render_thread_limit(self.effects.render_thread_limit(effects::processors()));
         // Before the theme reads it: a change restyles the open window (shadows, the caret).
         if self.effects.publish(ctx) && self.styled {
             theme::apply(ctx, self.theme);

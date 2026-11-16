@@ -8,6 +8,7 @@ pub(super) mod macos_association;
 pub mod motion;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) mod open_worker;
+pub mod perf;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) mod pickers;
 pub mod portable;

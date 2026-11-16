@@ -656,7 +656,20 @@ impl DocView {
     /// Pull a bounded batch of current results into textures. Demand is committed first, so
     /// offscreen results and obsolete scale/configuration tags never allocate a ColorImage.
     pub fn receive(&mut self, ctx: &egui::Context, pool: &RenderPool) {
-        receive_batch(pool, |r| self.receive_result(ctx, r));
+        receive_batch(pool, |r| {
+            // Every picture a render thread drew cost its time, shown or not.
+            let kind = if r.request.kind != RequestKind::Pixels {
+                crate::perf::Raster::Text
+            } else if r.request.tile.is_some() {
+                crate::perf::Raster::Tile
+            } else if r.request.tag & THUMB_TAG != 0 {
+                crate::perf::Raster::Thumbnail
+            } else {
+                crate::perf::Raster::Page
+            };
+            crate::perf::raster_received(kind, r.millis, r.width, r.height, r.error.is_some());
+            self.receive_result(ctx, r)
+        });
     }
 
     pub(super) fn receive_result(&mut self, ctx: &egui::Context, r: pdfcraft_render::RenderedPage) -> usize {
