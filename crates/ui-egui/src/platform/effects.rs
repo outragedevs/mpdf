@@ -94,11 +94,46 @@ pub fn max_fps_from_env(value: Option<&str>) -> Option<u32> {
     value?.trim().parse::<u32>().ok().filter(|fps| *fps <= MAX_FPS_LIMIT)
 }
 
+/// Frames a second while the pages scroll and effects are reduced, unless `PDFCRAFT_SCROLL_FPS`
+/// says otherwise. Scrolling changes most of the window, so each of its frames costs a software
+/// rasterizer the most; half the rate halves that, and a wheel rarely steps faster.
+pub const DEFAULT_SCROLL_FPS: u32 = 15;
+
+/// `PDFCRAFT_SCROLL_FPS`: frames a second while the pages scroll, `0` for the same as other
+/// frames. `None` for anything else (unset, not a number, above [`MAX_FPS_LIMIT`]).
+pub fn scroll_fps_from_env(value: Option<&str>) -> Option<u32> {
+    max_fps_from_env(value)
+}
+
+/// `PDFCRAFT_RENDER_THREADS`: how many threads draw page pictures, 1 to [`MAX_RENDER_THREADS`].
+/// `None` for anything else.
+pub fn render_threads_from_env(value: Option<&str>) -> Option<usize> {
+    value?.trim().parse::<usize>().ok().filter(|threads| (1..=MAX_RENDER_THREADS).contains(threads))
+}
+
+/// How many processors this process may use, asked once.
+pub fn processors() -> usize {
+    static PROCESSORS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PROCESSORS.get_or_init(|| std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get))
+}
+
+/// The most threads `PDFCRAFT_RENDER_THREADS` may ask for.
+pub const MAX_RENDER_THREADS: usize = 16;
+
+/// How many threads draw page pictures while a software rasterizer draws the window on a
+/// machine with `cores` processors: the rasterizer needs processors of its own, and on a
+/// terminal server other sessions share them.
+pub fn software_render_threads(cores: usize) -> usize {
+    (cores / 2).clamp(1, 3)
+}
+
 /// The shortest time between two frames while effects are reduced. Only the desktop app installs
 /// one ([`Effects::frame_cap`]): tests, screenshots and the web build never wait.
 #[derive(Debug, Clone)]
 pub struct FrameCap {
     interval: Duration,
+    /// The interval after a frame that scrolled the pages, when it is longer.
+    scroll_interval: Option<Duration>,
     last: Option<Instant>,
     /// The window size at the last frame: a resize is drawn at once.
     size: Option<egui::Vec2>,
@@ -108,7 +143,21 @@ impl FrameCap {
     /// A cap of `fps` frames a second; `None` for 0 (no cap). Above [`MAX_FPS_LIMIT`] is limited.
     pub fn per_second(fps: u32) -> Option<Self> {
         let fps = fps.min(MAX_FPS_LIMIT);
-        (fps > 0).then(|| Self { interval: Duration::from_secs(1) / fps, last: None, size: None })
+        (fps > 0).then(|| Self { interval: Duration::from_secs(1) / fps, scroll_interval: None, last: None, size: None })
+    }
+
+    /// At most `fps` frames a second while the pages scroll; 0, or no fewer than the cap's own,
+    /// leaves scrolling at the cap's rate.
+    #[must_use]
+    pub fn with_scroll_fps(mut self, fps: u32) -> Self {
+        self.scroll_interval = (fps > 0).then(|| Duration::from_secs(1) / fps).filter(|interval| *interval > self.interval);
+        self
+    }
+
+    /// Frames a second this cap allows while the pages scroll.
+    pub fn scroll_fps(&self) -> u32 {
+        let nanos = self.scroll_interval.unwrap_or(self.interval).as_nanos().max(1);
+        u32::try_from(1_000_000_000 / nanos).unwrap_or(u32::MAX)
     }
 
     /// Frames a second this cap allows.
@@ -118,13 +167,15 @@ impl FrameCap {
     }
 
     /// How long to wait before a frame of a window of `size` that starts `now`; `None` for none:
-    /// the first frame, a resize, or the interval has passed.
-    pub(crate) fn wait(&self, now: Instant, size: egui::Vec2) -> Option<Duration> {
+    /// the first frame, a resize, or the interval has passed. `scrolled`: the frame before
+    /// scrolled the pages, so this one likely does too.
+    pub(crate) fn wait(&self, now: Instant, size: egui::Vec2, scrolled: bool) -> Option<Duration> {
         if self.size != Some(size) {
             return None;
         }
         let elapsed = now.checked_duration_since(self.last?)?;
-        self.interval.checked_sub(elapsed).filter(|wait| !wait.is_zero())
+        let interval = if scrolled { self.scroll_interval.unwrap_or(self.interval) } else { self.interval };
+        interval.checked_sub(elapsed).filter(|wait| !wait.is_zero())
     }
 
     /// A frame of a window of `size` started at `at`.
@@ -148,6 +199,8 @@ pub struct Effects {
     published: Option<bool>,
     /// The frame cap while effects are reduced; the desktop app installs it.
     pub frame_cap: Option<FrameCap>,
+    /// `PDFCRAFT_RENDER_THREADS`, which decides alone when set.
+    pub render_threads: Option<usize>,
 }
 
 impl Effects {
@@ -180,12 +233,19 @@ impl Effects {
         self.last_start_software = saved(settings);
     }
 
+    /// How many threads draw page pictures, `None` for the engine's own choice: the
+    /// environment's, or fewer while effects are reduced ([`software_render_threads`]).
+    pub fn render_thread_limit(&self, cores: usize) -> Option<usize> {
+        self.render_threads.or_else(|| self.reduced().then(|| software_render_threads(cores)))
+    }
+
     /// How long to wait before this frame: only while effects are reduced and a cap is installed.
-    /// Records the frame, so call it once a frame, then wait.
-    pub(crate) fn frame_wait(&mut self, now: Instant, size: egui::Vec2) -> Option<Duration> {
+    /// Records the frame, so call it once a frame, then wait. `scrolled`: the frame before
+    /// scrolled the pages ([`take_scrolled`]).
+    pub(crate) fn frame_wait(&mut self, now: Instant, size: egui::Vec2, scrolled: bool) -> Option<Duration> {
         let reduced = self.reduced();
         let cap = self.frame_cap.as_mut()?;
-        let wait = if reduced { cap.wait(now, size) } else { None };
+        let wait = if reduced { cap.wait(now, size, scrolled) } else { None };
         cap.frame_started(now + wait.unwrap_or_default(), size);
         wait
     }
@@ -193,6 +253,11 @@ impl Effects {
     /// The cap's frames a second while it applies.
     pub fn max_fps(&self) -> Option<u32> {
         self.frame_cap.as_ref().filter(|_| self.reduced()).map(FrameCap::fps)
+    }
+
+    /// The cap's frames a second while the pages scroll, while it applies.
+    pub fn scroll_fps(&self) -> Option<u32> {
+        self.frame_cap.as_ref().filter(|_| self.reduced()).map(FrameCap::scroll_fps)
     }
 
     /// Hand the current state to egui's context, where the theme and the painting code read it
@@ -216,6 +281,21 @@ fn key() -> egui::Id {
 /// Whether effects are reduced, as last published ([`Effects::publish`]); false before that.
 pub(crate) fn reduced(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<bool>(key())).unwrap_or(false)
+}
+
+/// Return the stable egui id holding whether this frame scrolled the pages.
+fn scrolled_key() -> egui::Id {
+    egui::Id::unique("pdfcraft-pages-scrolled")
+}
+
+/// The page view moved this frame.
+pub(crate) fn note_scroll(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(scrolled_key(), true));
+}
+
+/// Whether the page view moved in the frame before; asked once at the start of a frame.
+pub(crate) fn take_scrolled(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(scrolled_key())).unwrap_or(false)
 }
 
 #[cfg(test)]

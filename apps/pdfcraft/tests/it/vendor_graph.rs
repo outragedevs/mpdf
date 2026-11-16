@@ -51,7 +51,7 @@ fn vendor_provenance_window_stack_graph_is_resolved() {
     assert_resolved("winit", "0.30.13", "https://github.com/storytold/winit.git", "a517b3846ee8457d84ee4975110bfda6797c44dc");
     // mPDF's fork of storytold/egui: revision 725a39fca940f77149ffbb9c58eef405a16997bc plus the
     // four commits that repaint only what changed on a software renderer (vendor/README.md).
-    assert_resolved("egui-wgpu", "0.37.0", "https://github.com/outragedevs/egui.git", "d8594af1bda87cd0e81a1f5400134a972c6b5cc2");
+    assert_resolved("egui-wgpu", "0.37.0", "https://github.com/outragedevs/egui.git", "54c1381350eeae64ea24a14fc467d41d71f9e8e1");
     // Retained provenance: the audited copies and their recorded W1–W13 / E2+E3 rows.
     let readme = std::fs::read_to_string(root().join("vendor/README.md")).expect("vendor/README.md");
     for marker in ["W1–W13", "surface_fit", "catch_errors", "e9809ef54b18499bb4f2cac945719ecc2a61061b"] {

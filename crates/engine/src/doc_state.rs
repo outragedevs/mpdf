@@ -50,8 +50,30 @@ pub struct DocId(pub u64);
 /// clear) is printed at.
 pub(crate) const LOW_RESOLUTION_PRINT_DPI: f64 = 150.0;
 
+/// The app's limit on [`render_threads`]; 0 for none.
+static RENDER_THREAD_LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many threads draw the page pictures of documents opened or reloaded from now on:
+/// `limit`, or with `None` the engine's own choice by the machine's processors. A desktop app
+/// lowers it where the processors are needed elsewhere (a software rasterizer drawing the
+/// window, a terminal server's other sessions).
+pub fn set_render_thread_limit(limit: Option<usize>) {
+    RENDER_THREAD_LIMIT.store(limit.map_or(0, |threads| threads.max(1)), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How many threads draw the page pictures of a document opened now.
+pub fn render_thread_count() -> usize {
+    render_threads()
+}
+
 pub(crate) fn render_threads() -> usize {
-    std::thread::available_parallelism().map(std::num::NonZeroUsize::get).unwrap_or(4).clamp(2, 8) - 1
+    let cores = std::thread::available_parallelism().map(std::num::NonZeroUsize::get).unwrap_or(4);
+    render_threads_for(cores, RENDER_THREAD_LIMIT.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The render threads on `cores` processors under `limit` (0 for none).
+pub(crate) fn render_threads_for(cores: usize, limit: usize) -> usize {
+    if limit > 0 { limit } else { cores.clamp(2, 8) - 1 }
 }
 
 /// A document's working file captured for crash recovery.
