@@ -649,12 +649,13 @@ mod tests {
         assert!(pdf.contains("<key>CFBundleTypeIconFile</key>"), "declares document icon file for Finder");
     }
 
-    // The bundle id must match the app id the binary uses; renames change both (#174).
+    // The bundle id must match the one the app looks for in a file's "open with" binding; renames
+    // change both (#174). mPDF has its own, so macOS never takes it for an installed PdfCraft.
     #[test]
     fn macos_bundle_id_matches_app_id() {
-        assert!(read("packaging/macos/Info.plist.in").contains("<string>ai.storyteller.pdfcraft</string>"), "bundle id");
-        let main = read("apps/pdfcraft/src/main.rs");
-        assert!(main.contains(r#"const APP_ID: &str = "ai.storyteller.pdfcraft""#), "APP_ID drifted from the bundle id");
+        assert!(read("packaging/macos/Info.plist.in").contains("<string>de.merkelhub.mpdf</string>"), "bundle id");
+        let association = read("crates/ui-egui/src/platform/macos_association.rs");
+        assert!(association.contains(r#"const BUNDLE_ID: &str = "de.merkelhub.mpdf""#), "BUNDLE_ID drifted from the bundle id");
     }
 
     // Committed file with `<!-- -->` comments stripped, so a commented-out claim cannot pass.

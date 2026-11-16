@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Build, sign and (optionally) notarize the macOS release artifacts:
 #
-#   $DIST/pdfcraft-<version>-macos-<arch>.dmg          PdfCraft.app on a drag-to-Applications DMG
-#   $DIST/pdfcraft-cli-<version>-macos-<arch>.zip      the headless CLI
+#   $DIST/mpdf-<version>-macos-<arch>.zip              mPDF.app
+#   $DIST/mpdf-cli-<version>-macos-<arch>.zip          the headless CLI
+#
+# mPDF ships no disk image: PdfCraft's image shows PdfCraft's name and artwork.
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
 #
@@ -39,9 +41,9 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 IDENTITY="${MACOS_SIGN_IDENTITY:--}"
 SHORT_VERSION="${VERSION%%-*}"
 WORK="$CARGO_TARGET_DIR/macos-package"
-APP="$WORK/PdfCraft.app"
-DMG="$DIST/pdfcraft-$VERSION-macos-$ARCH.dmg"
-CLI_ZIP="$DIST/pdfcraft-cli-$VERSION-macos-$ARCH.zip"
+APP="$WORK/mPDF.app"
+APP_ZIP="$DIST/mpdf-$VERSION-macos-$ARCH.zip"
+CLI_ZIP="$DIST/mpdf-cli-$VERSION-macos-$ARCH.zip"
 
 NOTARIZE=0
 if [[ "$IDENTITY" = "-" ]]; then
@@ -52,7 +54,7 @@ else
   warn "macOS: APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID incomplete; signed but not notarized"
 fi
 
-echo "==> PdfCraft $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize: $NOTARIZE"
+echo "==> mPDF $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize: $NOTARIZE"
 
 # ---- build -------------------------------------------------------------------------------------
 if [[ "$SKIP_BUILD" = 0 ]]; then
@@ -63,11 +65,9 @@ fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/bin"
-# Cargo builds the programs as mpdf and mpdf-cli; this package still stages them under the names
-# the rest of this script uses.
-for bin in pdfcraft pdfcraft-cli; do
+for bin in mpdf mpdf-cli; do
   inputs=()
-  for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/mpdf${bin#pdfcraft}"); done
+  for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
   lipo -info "$WORK/bin/$bin"
 done
@@ -114,16 +114,15 @@ notarize() {
   fi
 }
 
-# ---- PdfCraft.app ----------------------------------------------------------------------------
+# ---- mPDF.app ----------------------------------------------------------------------------
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
-cp "$WORK/bin/pdfcraft" "$APP/Contents/MacOS/PdfCraft"
-cp "$ROOT/assets/app-icon/pdfcraft.icns" "$APP/Contents/Resources/PdfCraft.icns"
+cp "$WORK/bin/mpdf" "$APP/Contents/MacOS/mPDF"
+cp "$ROOT/assets/app-icon/pdfcraft.icns" "$APP/Contents/Resources/mPDF.icns"
 # Required embedded-font notices are independent of optional font inputs.
 cp "$ROOT/NOTICE" "$APP/Contents/Resources/NOTICE"
-# The standard About panel (PdfCraft menu > About PdfCraft) shows Credits.rtf under the version:
-# the website and Discord links the in-app About dialog has (#1287).
+# The standard About panel (mPDF menu > About mPDF) shows Credits.rtf under the version.
 cp "$HERE/Credits.rtf" "$APP/Contents/Resources/Credits.rtf"
 copy_font_licences "$APP/Contents/Resources"
 # OCR models: the app finds them at Contents/MacOS/../Resources/models. Before signing, so the
@@ -137,82 +136,37 @@ printf 'APPL????' >"$APP/Contents/PkgInfo"
 
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
 # Today the only nested code is the main executable; frameworks/helpers would be signed here too.
-sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/PdfCraft"
+sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/mPDF"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
 
 if [[ "$NOTARIZE" = 1 ]]; then
-  ditto -c -k --keepParent "$APP" "$WORK/PdfCraft-notarize.zip"
-  notarize "$WORK/PdfCraft-notarize.zip"
+  ditto -c -k --keepParent "$APP" "$WORK/mPDF-notarize.zip"
+  notarize "$WORK/mPDF-notarize.zip"
   stapler_retry staple "$APP"
   stapler_retry validate "$APP"
   spctl --assess --type execute -vvv "$APP"
 fi
 
-# ---- DMG ---------------------------------------------------------------------------------------
-echo "==> building $DMG"
-STAGE="$WORK/dmg"
-mkdir -p "$STAGE"
-ditto "$APP" "$STAGE/PdfCraft.app"
-ln -s /Applications "$STAGE/Applications"
-# Finder window layout: background, icon size and positions (packaging/macos/dmg/README.md).
-mkdir -p "$STAGE/.background"
-cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
-cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
-rm -f "$DMG"
-# `hdiutil create -srcfolder` writes the files as they are. `makehybrid -hfs` gave every file a
-# com.apple.FinderInfo (a Finder location of -1,-1), which `codesign --verify --strict` rejects as
-# "Finder information, or similar detritus" on the app in the image and on a copy installed from it,
-# so MDM and compliance checks reported a correctly notarized app as damaged (#390). `create`
-# attaches a device while it copies, which fails now and then on CI runners ("Resource busy"), so
-# it gets a few tries. The volume name has no version: .DS_Store finds the background through an
-# alias that includes it.
-# Usage: hdiutil_retry <what> <hdiutil args…>; tries five times with growing pauses.
-hdiutil_retry() {
-  local what="$1" attempt
-  shift
-  for attempt in 1 2 3 4 5; do
-    if hdiutil "$@"; then
-      return 0
-    fi
-    [[ "$attempt" = 5 ]] && { echo "hdiutil $what failed 5 times" >&2; return 1; }
-    warn "hdiutil $what failed (attempt $attempt of 5); retrying in $((attempt * 10))s"
-    sleep $((attempt * 10))
-  done
-}
-hdiutil_retry create create -srcfolder "$STAGE" -volname "PdfCraft" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$DMG"
-sign "$DMG"
-codesign --verify --strict --verbose=2 "$DMG"
-# The app inside the image must still pass --strict, so a makehybrid-style regression can't ship.
-MOUNT="$WORK/dmg-check"
-rm -rf "$MOUNT"
-mkdir -p "$MOUNT"
-hdiutil_retry attach attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG" >/dev/null
-if ! codesign --verify --strict --deep --verbose=2 "$MOUNT/PdfCraft.app"; then
-  hdiutil_retry detach detach "$MOUNT" >/dev/null || true
-  exit 1
-fi
-hdiutil_retry detach detach "$MOUNT" >/dev/null
-if [[ "$NOTARIZE" = 1 ]]; then
-  notarize "$DMG"
-  stapler_retry staple "$DMG"
-  stapler_retry validate "$DMG"
-  spctl --assess --type open --context context:primary-signature -vvv "$DMG"
-fi
+# ---- app zip -----------------------------------------------------------------------------------
+# `ditto` keeps the bundle's signature and, after notarization, its stapled ticket.
+echo "==> building $APP_ZIP"
+rm -f "$APP_ZIP"
+ditto -c -k --keepParent "$APP" "$APP_ZIP"
 
 # ---- CLI ---------------------------------------------------------------------------------------
 echo "==> building $CLI_ZIP"
-CLI_DIR="$WORK/pdfcraft-cli-$VERSION-macos-$ARCH"
+CLI_DIR="$WORK/mpdf-cli-$VERSION-macos-$ARCH"
 mkdir -p "$CLI_DIR"
-cp "$WORK/bin/pdfcraft-cli" "$CLI_DIR/"
+cp "$WORK/bin/mpdf-cli" "$CLI_DIR/"
 copy_docs "$CLI_DIR"
-sign --options runtime "$CLI_DIR/pdfcraft-cli"
-codesign --verify --strict --verbose=2 "$CLI_DIR/pdfcraft-cli"
+sign --options runtime "$CLI_DIR/mpdf-cli"
+codesign --verify --strict --verbose=2 "$CLI_DIR/mpdf-cli"
 rm -f "$CLI_ZIP"
 ditto -c -k --keepParent "$CLI_DIR" "$CLI_ZIP"
 # A bare Mach-O can't carry a stapled ticket; Gatekeeper looks the notarization up online.
 if [[ "$NOTARIZE" = 1 ]]; then notarize "$CLI_ZIP"; fi
 
-"$WORK/bin/pdfcraft-cli" --version
+"$WORK/bin/mpdf-cli" --version
 echo "==> done"
-ls -lh "$DMG" "$CLI_ZIP"
+ls -lh "$APP_ZIP" "$CLI_ZIP"
